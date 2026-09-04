@@ -24,12 +24,16 @@ import {
   Lock,
   FileCheck,
   ClipboardList,
-  Calculator
+  Calculator,
+  LogOut,
+  Users as UsersIcon,
+  Shield
 } from 'lucide-react';
-import { Quotation } from '../types';
+import { Quotation, UserAccount } from '../types';
 import { InterglassEmblem } from './InterglassLogo';
 import { calculateQuotationTotals } from '../utils/calculations';
 import { generateNextQuoteNumber, ConfirmationDetails } from '../utils/quotationStorage';
+import { UsersManagementView } from './UsersManagementView';
 
 interface DashboardViewProps {
   quotations: Quotation[];
@@ -46,6 +50,9 @@ interface DashboardViewProps {
   onLoadSample: () => void;
   onExportBackup: () => void;
   onImportBackup: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  currentUser: UserAccount;
+  onLogout: () => void;
+  onNotification?: (msg: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -59,14 +66,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onLoadSample,
   onExportBackup,
   onImportBackup,
+  currentUser,
+  onLogout,
+  onNotification,
 }) => {
+  const isProduction = currentUser.role === 'PRODUCTION';
+  const isAdmin = currentUser.role === 'ADMIN';
+
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'amount-desc' | 'ref-desc'>('date-desc');
   const [copiedRef, setCopiedRef] = useState<string | null>(null);
 
-  // Dashboard Primary View Tabs: 'quotations' | 'job_cards'
-  const [dashboardTab, setDashboardTab] = useState<'quotations' | 'job_cards'>('quotations');
+  // Dashboard Primary View Tabs: 'quotations' | 'job_cards' | 'users'
+  const [dashboardTab, setDashboardTab] = useState<'quotations' | 'job_cards' | 'users'>(() => {
+    if (currentUser.role === 'PRODUCTION') return 'job_cards';
+    return 'quotations';
+  });
+
+  // Role enforcement when user changes
+  React.useEffect(() => {
+    if (currentUser.role === 'PRODUCTION' && dashboardTab !== 'job_cards') {
+      setDashboardTab('job_cards');
+    } else if (currentUser.role !== 'ADMIN' && dashboardTab === 'users') {
+      setDashboardTab('quotations');
+    }
+  }, [currentUser.role, dashboardTab]);
   // Sub-filter for quotations list: 'all' (shows all quotes with confirmed in light greenish tint) | 'confirmed' | 'pending' | 'cancelled'
   const [quotesFilter, setQuotesFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled'>('all');
 
@@ -75,60 +100,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [cancelReasonInput, setCancelReasonInput] = useState('');
   const [cancelError, setCancelError] = useState('');
 
-  // Confirmation Modal State
+  // Confirmation Modal State (Read-only as per last saved quotation)
   const [quoteToConfirm, setQuoteToConfirm] = useState<Quotation | null>(null);
-  const [confirmClientName, setConfirmClientName] = useState('');
-  const [confirmSalesmanName, setConfirmSalesmanName] = useState('');
-  const [confirmQty, setConfirmQty] = useState<number>(0);
-  const [confirmTotalAmount, setConfirmTotalAmount] = useState<number>(0);
-  const [confirmError, setConfirmError] = useState('');
 
   // Handle open confirmation modal
   const handleOpenConfirmationModal = (quote: Quotation) => {
-    const { grandTotalQty, totalAmountAED } = calculateQuotationTotals(quote);
     setQuoteToConfirm(quote);
-    setConfirmClientName(quote.client?.name || '');
-    setConfirmSalesmanName(quote.salesmanName || '');
-    setConfirmQty(
-      typeof quote.confirmedQty === 'number' ? quote.confirmedQty : grandTotalQty
-    );
-    setConfirmTotalAmount(
-      typeof quote.confirmedTotalAmount === 'number'
-        ? quote.confirmedTotalAmount
-        : totalAmountAED
-    );
-    setConfirmError('');
   };
 
-  // Submit Confirmation (Moves confirmed quotation to Job Cards!)
+  // Submit Confirmation (Moves confirmed quotation to Job Cards with exact saved quotation values)
   const handleConfirmOrderSubmit = () => {
     if (!quoteToConfirm) return;
-    if (!confirmClientName.trim()) {
-      setConfirmError('Please enter the client name.');
-      return;
-    }
-    if (!confirmSalesmanName.trim()) {
-      setConfirmError("Please enter the salesman's name.");
-      return;
-    }
-    if (confirmQty < 0) {
-      setConfirmError('Please enter a valid quantity.');
-      return;
-    }
-    if (confirmTotalAmount < 0) {
-      setConfirmError('Please enter a valid total amount.');
-      return;
-    }
+    const { grandTotalQty, totalAmountAED } = calculateQuotationTotals(quoteToConfirm);
 
     onConfirmQuotation(quoteToConfirm.id, {
-      clientName: confirmClientName.trim(),
-      salesmanName: confirmSalesmanName.trim(),
-      qty: Number(confirmQty) || 0,
-      totalAmount: Number(confirmTotalAmount) || 0,
+      clientName: (quoteToConfirm.client?.name || '').trim(),
+      salesmanName: (quoteToConfirm.salesmanName || quoteToConfirm.from?.attention || '').trim(),
+      qty: grandTotalQty,
+      totalAmount: totalAmountAED,
     });
 
     setQuoteToConfirm(null);
-    setConfirmError('');
     // Keep user in quotations tab where the confirmed quote displays in light greenish tint, locked for editing
     setDashboardTab('quotations');
     setQuotesFilter('all');
@@ -139,7 +131,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     if (!quoteToConfirm) return;
     onUnconfirmQuotation(quoteToConfirm.id);
     setQuoteToConfirm(null);
-    setConfirmError('');
     setDashboardTab('quotations');
   };
 
@@ -319,11 +310,80 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setTimeout(() => setCopiedRef(null), 2000);
   };
 
+  // Production specific metrics
+  const prodMetrics = useMemo(() => {
+    let totalPcs = 0;
+    let totalSqm = 0;
+    const confirmedList = quotations.filter((q) => q.status === 'confirmed');
+    confirmedList.forEach((q) => {
+      const { grandTotalQty, grandTotalSqm } = calculateQuotationTotals(q);
+      totalPcs += typeof q.confirmedQty === 'number' ? q.confirmedQty : grandTotalQty;
+      totalSqm += grandTotalSqm;
+    });
+    return {
+      count: confirmedList.length,
+      totalPcs,
+      totalSqm,
+    };
+  }, [quotations]);
+
   return (
     <div className="flex-1 bg-slate-50/80 min-h-screen">
       {/* Top Banner / Hero Header */}
       <div className="bg-white border-b border-slate-200 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6">
+          {/* Top Row: User Status & Sign Out */}
+          <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100 flex-wrap gap-3">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span>Interglass Commercial & Production System</span>
+              <span className="hidden sm:inline text-slate-300">•</span>
+              <span className="hidden sm:inline">Access Level: <strong className="text-slate-700">{currentUser.role}</strong></span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {/* Logged in User Pill */}
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl shadow-2xs">
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] text-white ${
+                    currentUser.role === 'ADMIN'
+                      ? 'bg-red-700'
+                      : currentUser.role === 'ESTIMATION'
+                      ? 'bg-blue-700'
+                      : 'bg-emerald-700'
+                  }`}
+                >
+                  {currentUser.username.substring(0, 2).toUpperCase()}
+                </div>
+                <div className="text-left">
+                  <span className="text-xs font-bold text-slate-800 mr-1.5">{currentUser.username}</span>
+                  <span
+                    className={`text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded border ${
+                      currentUser.role === 'ADMIN'
+                        ? 'bg-red-50 text-red-800 border-red-200'
+                        : currentUser.role === 'ESTIMATION'
+                        ? 'bg-blue-50 text-blue-800 border-blue-200'
+                        : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    }`}
+                  >
+                    {currentUser.role}
+                  </span>
+                </div>
+              </div>
+
+              {/* Logout Button */}
+              <button
+                type="button"
+                onClick={onLogout}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-red-700 bg-white hover:bg-red-50 border border-slate-200 hover:border-red-200 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                title="Sign out of Interglass Portal"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Logout</span>
+              </button>
+            </div>
+          </div>
+
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
             {/* Branding & Title */}
             <div className="flex items-start gap-4">
@@ -335,154 +395,231 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <h1 className="text-2xl sm:text-3xl font-serif italic font-black text-[#7B1818] tracking-wide">
                     INTERGLASS CO. LLC
                   </h1>
-                  <span className="px-2 py-0.5 text-xs font-semibold bg-red-50 text-[#7B1818] border border-red-200/80 rounded-md uppercase tracking-wider">
-                    Quotations Portal
+                  <span
+                    className={`px-2 py-0.5 text-xs font-semibold rounded-md uppercase tracking-wider border ${
+                      isProduction
+                        ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                        : 'bg-red-50 text-[#7B1818] border-red-200/80'
+                    }`}
+                  >
+                    {isProduction ? 'Factory Production Portal' : 'Quotations Portal'}
                   </span>
                 </div>
                 <p className="text-slate-600 text-sm mt-1">
-                  Manage, track, and generate official glass supply quotations with sequential ref numbers
+                  {isProduction
+                    ? 'Authorized Factory View: Review cutting lists, glass types, piece sizes, and fabrication orders'
+                    : 'Manage, track, and generate official glass supply quotations with sequential ref numbers'}
                 </p>
               </div>
             </div>
 
-            {/* Primary Action: Add New Quotation Button */}
-            <div className="flex items-center gap-3 flex-wrap">
-              <button
-                type="button"
-                onClick={onAddNewQuotation}
-                id="btn-add-new-quotation"
-                className="px-5 py-2.5 bg-[#7B1818] hover:bg-[#631313] text-white rounded-lg shadow-sm hover:shadow-md font-medium text-sm flex items-center gap-2.5 transition-all transform active:scale-98 cursor-pointer"
-              >
-                <Plus className="w-5 h-5 text-white/90" />
-                <span className="font-semibold">Add New Quotation</span>
-                <span className="hidden sm:inline-block text-[11px] bg-white/20 px-2 py-0.5 rounded text-white/90 font-mono">
-                  {nextQuoteNumber}
-                </span>
-              </button>
-
-              <label className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors">
-                <Upload className="w-3.5 h-3.5 text-slate-500" />
-                <span>Import JSON</span>
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={onImportBackup}
-                  className="hidden"
-                />
-              </label>
-
-              {quotations.length > 0 && (
+            {/* Primary Actions (Hidden for PRODUCTION users) */}
+            {!isProduction && (
+              <div className="flex items-center gap-3 flex-wrap">
                 <button
                   type="button"
-                  onClick={onExportBackup}
-                  className="px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors cursor-pointer"
-                  title="Download full JSON backup of all quotations"
+                  onClick={onAddNewQuotation}
+                  id="btn-add-new-quotation"
+                  className="px-5 py-2.5 bg-[#7B1818] hover:bg-[#631313] text-white rounded-lg shadow-sm hover:shadow-md font-medium text-sm flex items-center gap-2.5 transition-all transform active:scale-98 cursor-pointer"
                 >
-                  <Download className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Backup All</span>
+                  <Plus className="w-5 h-5 text-white/90" />
+                  <span className="font-semibold">Add New Quotation</span>
+                  <span className="hidden sm:inline-block text-[11px] bg-white/20 px-2 py-0.5 rounded text-white/90 font-mono">
+                    {nextQuoteNumber}
+                  </span>
                 </button>
-              )}
-            </div>
+
+                <label className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors">
+                  <Upload className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Import JSON</span>
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={onImportBackup}
+                    className="hidden"
+                  />
+                </label>
+
+                {quotations.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={onExportBackup}
+                    className="px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                    title="Download full JSON backup of all quotations"
+                  >
+                    <Download className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Backup All</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Quick Metrics Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-6 sm:mt-8">
-            <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Quotations</span>
-                <FileText className="w-4 h-4 text-slate-400" />
+          {isProduction ? (
+            /* Factory Production Metrics (No amounts, no financials) */
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-6 sm:mt-8">
+              <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Active Job Cards</span>
+                  <ClipboardList className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-emerald-950">{prodMetrics.count}</span>
+                  <span className="text-xs text-emerald-700 font-medium">orders</span>
+                </div>
+                <div className="text-[11px] text-emerald-700 mt-1 font-medium">
+                  Confirmed for factory fabrication
+                </div>
               </div>
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-2xl font-bold text-slate-900">{metrics.count}</span>
-                <span className="text-xs text-slate-500 font-medium">records</span>
-              </div>
-              <div className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1 font-medium">
-                <span>Next Quote:</span>
-                <span className="font-mono font-bold text-[#7B1818]">{nextQuoteNumber}</span>
-              </div>
-            </div>
 
-            <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Pipeline Value</span>
-                <span className="text-xs font-mono font-bold text-slate-400">AED</span>
+              <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Pieces to Produce</span>
+                  <Layers className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold text-emerald-950 font-mono">
+                    {prodMetrics.totalPcs.toLocaleString()}
+                  </span>
+                  <span className="text-xs text-emerald-700 font-medium">Pcs</span>
+                </div>
+                <div className="text-[11px] text-emerald-700 mt-1">
+                  Total glass units in fabrication queue
+                </div>
               </div>
-              <div className="mt-2 flex items-baseline gap-1.5">
-                <span className="text-2xl font-bold text-slate-900 font-mono">
-                  {metrics.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-              </div>
-              <div className="text-[11px] text-slate-500 mt-1">
-                Incl. 5% UAE VAT
-              </div>
-            </div>
 
-            <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Glass Area</span>
-                <Layers className="w-4 h-4 text-slate-400" />
+              <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Total Glass Area</span>
+                  <Layers className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold text-emerald-950 font-mono">
+                    {prodMetrics.totalSqm.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-xs text-emerald-700 font-medium">m²</span>
+                </div>
+                <div className="text-[11px] text-emerald-700 mt-1 font-mono">
+                  Cumulative square meters
+                </div>
               </div>
-              <div className="mt-2 flex items-baseline gap-1.5">
-                <span className="text-2xl font-bold text-slate-900 font-mono">
-                  {metrics.totalSqm.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-                <span className="text-xs text-slate-500 font-medium">m²</span>
-              </div>
-              <div className="text-[11px] text-slate-500 mt-1 font-mono">
-                {metrics.totalItems} pieces ordered
-              </div>
-            </div>
 
-            <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">This Month</span>
-                <Calendar className="w-4 h-4 text-slate-400" />
-              </div>
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-2xl font-bold text-[#7B1818]">{metrics.thisMonthCount}</span>
-                <span className="text-xs text-slate-500 font-medium">in {metrics.currentYyMm}</span>
-              </div>
-              <div className="text-[11px] text-slate-500 mt-1">
-                Serial count in current cycle
+              <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Factory Status</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-lg font-bold text-emerald-900">Queue Active</span>
+                </div>
+                <div className="text-[11px] text-emerald-700 mt-1">
+                  Ready for cutting & processing
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            /* Commercial & Estimation Metrics */
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-6 sm:mt-8">
+              <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Quotations</span>
+                  <FileText className="w-4 h-4 text-slate-400" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-slate-900">{metrics.count}</span>
+                  <span className="text-xs text-slate-500 font-medium">records</span>
+                </div>
+                <div className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1 font-medium">
+                  <span>Next Quote:</span>
+                  <span className="font-mono font-bold text-[#7B1818]">{nextQuoteNumber}</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Pipeline Value</span>
+                  <span className="text-xs font-mono font-bold text-slate-400">AED</span>
+                </div>
+                <div className="mt-2 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold text-slate-900 font-mono">
+                    {metrics.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">
+                  Incl. 5% UAE VAT
+                </div>
+              </div>
+
+              <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Glass Area</span>
+                  <Layers className="w-4 h-4 text-slate-400" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold text-slate-900 font-mono">
+                    {metrics.totalSqm.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-xs text-slate-500 font-medium">m²</span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1 font-mono">
+                  {metrics.totalItems} pieces ordered
+                </div>
+              </div>
+
+              <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">This Month</span>
+                  <Calendar className="w-4 h-4 text-slate-400" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-[#7B1818]">{metrics.thisMonthCount}</span>
+                  <span className="text-xs text-slate-500 font-medium">in {metrics.currentYyMm}</span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">
+                  Serial count in current cycle
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Main Content Area: Tabs, Search, Filters & Table */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {/* Primary Dashboard Tabs: QUOTATIONS vs JOB CARDS */}
+        {/* Primary Dashboard Tabs: QUOTATIONS vs JOB CARDS vs USERS */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 mb-6 gap-4">
-          <div className="flex items-center gap-1 sm:gap-3">
-            {/* Tab 1: Quotations */}
-            <button
-              type="button"
-              onClick={() => setDashboardTab('quotations')}
-              className={`pb-3 px-3 sm:px-4 text-sm sm:text-base font-bold flex items-center gap-2.5 border-b-2 transition-all cursor-pointer ${
-                dashboardTab === 'quotations'
-                  ? 'border-[#7B1818] text-[#7B1818]'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <FileText className="w-4 h-4 sm:w-5 sm:h-5" />
-              <span>Quotations</span>
-              <span
-                className={`text-xs px-2.5 py-0.5 rounded-full font-mono font-bold ${
-                  dashboardTab === 'quotations' ? 'bg-red-100 text-[#7B1818]' : 'bg-slate-100 text-slate-600'
+          <div className="flex items-center gap-1 sm:gap-3 flex-wrap">
+            {/* Tab 1: Quotations (Hidden for PRODUCTION users) */}
+            {!isProduction && (
+              <button
+                type="button"
+                onClick={() => setDashboardTab('quotations')}
+                className={`pb-3 px-3 sm:px-4 text-sm sm:text-base font-bold flex items-center gap-2.5 border-b-2 transition-all cursor-pointer ${
+                  dashboardTab === 'quotations'
+                    ? 'border-[#7B1818] text-[#7B1818]'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
                 }`}
               >
-                {quotesFilter === 'pending'
-                  ? tabCounts.unconfirmedQuotesCount
-                  : quotesFilter === 'confirmed'
-                  ? tabCounts.confirmedCount
-                  : quotesFilter === 'cancelled'
-                  ? tabCounts.cancelledCount
-                  : tabCounts.activeAndConfirmedCount}
-              </span>
-            </button>
+                <FileText className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span>Quotations</span>
+                <span
+                  className={`text-xs px-2.5 py-0.5 rounded-full font-mono font-bold ${
+                    dashboardTab === 'quotations' ? 'bg-red-100 text-[#7B1818]' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {quotesFilter === 'pending'
+                    ? tabCounts.unconfirmedQuotesCount
+                    : quotesFilter === 'confirmed'
+                    ? tabCounts.confirmedCount
+                    : quotesFilter === 'cancelled'
+                    ? tabCounts.cancelledCount
+                    : tabCounts.activeAndConfirmedCount}
+                </span>
+              </button>
+            )}
 
-            {/* Tab 2: JOB CARDS */}
+            {/* Tab 2: JOB CARDS (Visible to All) */}
             <button
               type="button"
               onClick={() => setDashboardTab('job_cards')}
@@ -507,6 +644,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </span>
               )}
             </button>
+
+            {/* Tab 3: Users (ONLY VISIBLE TO ADMIN) */}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setDashboardTab('users')}
+                className={`pb-3 px-3 sm:px-4 text-sm sm:text-base font-bold flex items-center gap-2.5 border-b-2 transition-all cursor-pointer ${
+                  dashboardTab === 'users'
+                    ? 'border-purple-700 text-purple-900 bg-purple-50/50 rounded-t-lg'
+                    : 'border-transparent text-slate-500 hover:text-purple-800'
+                }`}
+              >
+                <UsersIcon className="w-4 h-4 sm:w-5 sm:h-5 text-purple-700" />
+                <span>Users</span>
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200">
+                  Admin Only
+                </span>
+              </button>
+            )}
           </div>
 
           {/* Sub-Filters for Quotations Tab */}
@@ -578,21 +734,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </div>
 
-        {/* Controls Bar: Search & Filters */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-5">
-          <div className="relative flex-1 max-w-md">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder={
-                dashboardTab === 'job_cards'
-                  ? 'Search job cards by ref, client, salesman, emirate...'
-                  : 'Search quotations by quote ref, client, salesman...'
-              }
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#7B1818]/20 focus:border-[#7B1818] transition-all shadow-2xs"
-            />
+        {/* Conditional Content: Users Management (Admin) vs Tables */}
+        {dashboardTab === 'users' && isAdmin ? (
+          <UsersManagementView
+            currentUser={currentUser}
+            onNotification={onNotification}
+          />
+        ) : (
+          <>
+            {/* Controls Bar: Search & Filters */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-5">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder={
+                    dashboardTab === 'job_cards'
+                      ? 'Search job cards by ref, client, salesman, emirate...'
+                      : 'Search quotations by quote ref, client, salesman...'
+                  }
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#7B1818]/20 focus:border-[#7B1818] transition-all shadow-2xs"
+                />
             {searchTerm && (
               <button
                 type="button"
@@ -792,15 +956,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       >
                         {/* Status badge / Click to edit */}
                         <td className="py-3 px-3 align-top text-center" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenConfirmationModal(q)}
-                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs font-bold cursor-pointer transition-all bg-emerald-100 border-emerald-300 text-emerald-950 shadow-2xs hover:bg-emerald-200"
-                            title="Click to view/edit salesman name, qty, or unconfirm back to quotes"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                            <span>Confirmed</span>
-                          </button>
+                          {isProduction ? (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs font-bold bg-emerald-100 border-emerald-300 text-emerald-950 shadow-2xs">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                              <span>Confirmed</span>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenConfirmationModal(q)}
+                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs font-bold cursor-pointer transition-all bg-emerald-100 border-emerald-300 text-emerald-950 shadow-2xs hover:bg-emerald-200"
+                              title="Click to view confirmed order details or unconfirm back to quotes"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                              <span>Confirmed</span>
+                            </button>
+                          )}
                         </td>
 
                         {/* Job Card Ref */}
@@ -894,26 +1065,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               <span>Job Card</span>
                             </button>
 
-                            {/* View Specs (Form in Read-Only Mode) */}
-                            <button
-                              type="button"
-                              onClick={() => onOpenQuotation(q, 'edit')}
-                              className="px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 rounded transition-colors cursor-pointer flex items-center gap-1"
-                              title="Inspect specifications, sizes & calculations in read-only mode"
-                            >
-                              <Lock className="w-3 h-3 text-slate-500" />
-                              <span>Specs</span>
-                            </button>
+                            {/* View Specs (Form in Read-Only Mode) - Hidden for PRODUCTION */}
+                            {!isProduction && (
+                              <button
+                                type="button"
+                                onClick={() => onOpenQuotation(q, 'edit')}
+                                className="px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 rounded transition-colors cursor-pointer flex items-center gap-1"
+                                title="Inspect specifications, sizes & calculations in read-only mode"
+                              >
+                                <Lock className="w-3 h-3 text-slate-500" />
+                                <span>Specs</span>
+                              </button>
+                            )}
 
-                            {/* Edit / Unconfirm Modal Button */}
-                            <button
-                              type="button"
-                              onClick={() => handleOpenConfirmationModal(q)}
-                              className="p-1.5 text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded transition-colors cursor-pointer"
-                              title="Edit salesman name, quantity, or unconfirm back to quotes"
-                            >
-                              <UserCheck className="w-3.5 h-3.5" />
-                            </button>
+                            {/* Edit / Unconfirm Modal Button - Hidden for PRODUCTION */}
+                            {!isProduction && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenConfirmationModal(q)}
+                                className="p-1.5 text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded transition-colors cursor-pointer"
+                                title="Edit salesman name, quantity, or unconfirm back to quotes"
+                              >
+                                <UserCheck className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1244,12 +1419,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
         )}
+          </>
+        )}
       </div>
 
-      {/* Order Confirmation Modal */}
+      {/* Order Confirmation Modal (Non-editable, as per last saved quotation) */}
       {quoteToConfirm && (() => {
-        const modalVatAmount = Number((confirmTotalAmount * 0.05).toFixed(2));
-        const modalFinalAmount = Number((confirmTotalAmount + modalVatAmount).toFixed(2));
+        const { grandTotalQty, totalAmountAED, vatAmountAED, totalWithVatAED } = calculateQuotationTotals(quoteToConfirm);
+        const salesman = quoteToConfirm.salesmanName || quoteToConfirm.from?.attention || 'Not Assigned';
+        const client = quoteToConfirm.client?.name || 'Unnamed Client';
+        const isAlreadyConfirmed = quoteToConfirm.status === 'confirmed';
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
@@ -1263,16 +1442,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="text-base font-bold text-slate-900">
-                        {quoteToConfirm.status === 'confirmed' ? 'Edit Confirmed Order' : 'Confirm Quotation / Order'}
+                        {isAlreadyConfirmed ? 'Confirmed Order Details' : 'Confirm Quotation / Order'}
                       </h3>
                       <span className="text-xs font-mono font-bold px-2 py-0.5 bg-emerald-50 text-emerald-800 rounded border border-emerald-200">
                         {quoteToConfirm.from?.refNo || 'Quotation'}
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      {quoteToConfirm.status === 'confirmed'
-                        ? 'Review or adjust confirmed details, or unlock this quotation.'
-                        : 'Confirming will turn this quote light green in the dashboard and lock it for editing.'}
+                      {isAlreadyConfirmed
+                        ? 'Details as per the last saved quotation.'
+                        : 'Confirming will lock this quotation for editing and move it to Job Cards.'}
                     </p>
                   </div>
                 </div>
@@ -1285,129 +1464,90 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
               </div>
 
-              {/* Error Message */}
-              {confirmError && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 font-medium flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
-                  <span>{confirmError}</span>
-                </div>
-              )}
+              {/* Notice Banner: Non-editable as per last saved quotation */}
+              <div className="mb-4 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs text-slate-600">
+                <span className="flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span className="font-medium">Values are fixed as per last saved quotation</span>
+                </span>
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-slate-200 text-slate-700">
+                  Locked (Read Only)
+                </span>
+              </div>
 
-              {/* Form Fields */}
-              <div className="space-y-3.5">
-                {/* Salesman Name Field */}
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
+              {/* Non-Editable Details Display */}
+              <div className="space-y-3">
+                {/* Salesman Name */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                       <UserCheck className="w-3.5 h-3.5 text-amber-700" />
-                      <span>Salesman's Name / Assigned To</span>
-                      <span className="text-red-500">*</span>
+                      Salesman's Name / Assigned To
                     </span>
-                    <span className="text-[10px] text-slate-400 font-normal lowercase">editable</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={confirmSalesmanName}
-                    onChange={(e) => {
-                      setConfirmSalesmanName(e.target.value);
-                      if (confirmError) setConfirmError('');
-                    }}
-                    placeholder="e.g. Shiju / Mohammed / Rajesh"
-                    className="w-full px-3.5 py-2 text-xs sm:text-sm bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-colors"
-                    autoFocus
-                  />
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Mention the name of the salesman to whom this order belongs.
-                  </p>
+                    <p className="text-sm font-semibold text-slate-900 mt-0.5">
+                      {salesman}
+                    </p>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono px-2 py-0.5 rounded bg-white border border-slate-200 shrink-0">
+                    Locked
+                  </span>
                 </div>
 
-                {/* Client's Name Field */}
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
+                {/* Client Name */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                       <Building2 className="w-3.5 h-3.5 text-slate-600" />
-                      <span>Client Name</span>
-                      <span className="text-red-500">*</span>
+                      Client Name
                     </span>
-                    <span className="text-[10px] text-slate-400 font-normal lowercase">editable</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={confirmClientName}
-                    onChange={(e) => {
-                      setConfirmClientName(e.target.value);
-                      if (confirmError) setConfirmError('');
-                    }}
-                    placeholder="Client or Customer Name"
-                    className="w-full px-3.5 py-2 text-xs sm:text-sm bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-colors"
-                  />
+                    <p className="text-sm font-semibold text-slate-900 mt-0.5">
+                      {client}
+                    </p>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono px-2 py-0.5 rounded bg-white border border-slate-200 shrink-0">
+                    Locked
+                  </span>
                 </div>
 
-                {/* Quantity (Qty) & Total Amount in 2 columns */}
+                {/* Quantity & Total Amount in 2 columns */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {/* Quantity */}
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
-                      <span>Quantity (Qty)</span>
-                      <span className="text-[10px] text-slate-400 font-normal lowercase">editable</span>
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={confirmQty}
-                        onChange={(e) => {
-                          setConfirmQty(Number(e.target.value));
-                          if (confirmError) setConfirmError('');
-                        }}
-                        className="w-full px-3.5 py-2 text-xs sm:text-sm bg-white border border-slate-300 rounded-lg text-slate-900 font-bold font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-colors"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium pointer-events-none">
-                        Pcs
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block mb-0.5">
+                      Quantity (Qty)
+                    </span>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="font-mono font-bold text-lg text-slate-900">
+                        {grandTotalQty}
                       </span>
+                      <span className="text-xs text-slate-500 font-medium">Pieces</span>
                     </div>
                   </div>
 
                   {/* Total Amount (before VAT) */}
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
-                      <span>Total Amount (AED)</span>
-                      <span className="text-[10px] text-slate-400 font-normal lowercase">editable</span>
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={confirmTotalAmount}
-                        onChange={(e) => {
-                          setConfirmTotalAmount(Number(e.target.value));
-                          if (confirmError) setConfirmError('');
-                        }}
-                        className="w-full px-3.5 py-2 text-xs sm:text-sm bg-white border border-slate-300 rounded-lg text-slate-900 font-bold font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-colors"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium pointer-events-none">
-                        AED
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block mb-0.5">
+                      Total Amount (AED)
+                    </span>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="font-mono font-bold text-lg text-slate-900">
+                        AED {totalAmountAED.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* VAT Amount & Final Amount (Calculated by Formula, NOT editable) */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
-                  <div className="flex items-center justify-between text-xs text-slate-600 pb-2 border-b border-slate-200/80">
-                    <span className="flex items-center gap-1.5">
-                      <span>VAT Amount (5%)</span>
-                      <span className="text-[10px] text-slate-400 font-mono">(auto: 5% of total)</span>
-                    </span>
-                    <span className="font-mono font-semibold text-slate-800 text-sm">
-                      AED {modalVatAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {/* VAT Amount & Final Amount */}
+                <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs text-emerald-900 pb-2 border-b border-emerald-200/60">
+                    <span className="font-medium">VAT Amount (5%)</span>
+                    <span className="font-mono font-semibold text-emerald-950 text-sm">
+                      AED {vatAmountAED.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
 
-                  {/* Final Amount in BOLD */}
-                  <div className="flex items-center justify-between pt-1">
+                  {/* Final Amount */}
+                  <div className="flex items-center justify-between pt-0.5">
                     <div>
                       <span className="block text-xs font-extrabold uppercase tracking-wider text-emerald-950">
                         Final Amount (Total + VAT)
@@ -1417,8 +1557,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </span>
                     </div>
                     <div className="text-right">
-                      <span className="font-mono font-black text-xl text-emerald-900 tracking-tight">
-                        AED {modalFinalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      <span className="font-mono font-black text-xl text-emerald-950 tracking-tight">
+                        AED {totalWithVatAED.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                   </div>
@@ -1428,16 +1568,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {/* Modal Actions */}
               <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between gap-3 flex-wrap">
                 <div>
-                  {quoteToConfirm.status === 'confirmed' && (
-                    <button
-                      type="button"
-                      onClick={handleUnconfirmOrder}
-                      className="px-3 py-2 text-xs font-semibold text-amber-900 hover:text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
-                      title="Unlock quotation and return to active status"
-                    >
-                      <Lock className="w-3.5 h-3.5" />
-                      <span>Unconfirm & Unlock Editing</span>
-                    </button>
+                  {isAlreadyConfirmed && (
+                    isAdmin ? (
+                      <button
+                        type="button"
+                        onClick={handleUnconfirmOrder}
+                        className="px-3 py-2 text-xs font-semibold text-amber-900 hover:text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                        title="Unlock quotation and return to active status"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Unconfirm & Unlock Editing</span>
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-xs text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+                        <Lock className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Unconfirming restricted to ADMIN (HOD)</span>
+                      </div>
+                    )
                   )}
                 </div>
 
@@ -1447,16 +1594,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     onClick={() => setQuoteToConfirm(null)}
                     className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
                   >
-                    Cancel
+                    {isAlreadyConfirmed ? 'Close' : 'Cancel'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmOrderSubmit}
-                    className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-lg transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>{quoteToConfirm.status === 'confirmed' ? 'Save Changes' : 'Confirm Order'}</span>
-                  </button>
+                  {!isAlreadyConfirmed && (
+                    <button
+                      type="button"
+                      onClick={handleConfirmOrderSubmit}
+                      className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-lg transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Confirm Order</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

@@ -79,3 +79,15 @@ export interface Quotation {
   termsAndConditions: string[];
   bankDetails: BankDetails;
 }
+
+export type UserRole = 'ADMIN' | 'ESTIMATION' | 'PRODUCTION';
+
+export interface UserAccount {
+  id: string;
+  username: string; // e.g. "HOD", "ESTIMATOR1", "FACTORY1"
+  password: string; // e.g. "ADMIN1", "ESTM1", "PROD1"
+  role: UserRole;
+  isActive: boolean;
+  name?: string;
+  createdAt: string;
+}

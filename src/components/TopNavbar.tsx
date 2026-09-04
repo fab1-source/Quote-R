@@ -14,9 +14,13 @@ import {
   Save,
   ClipboardList,
   Calculator,
-  FileText
+  FileText,
+  LogOut,
+  Shield,
+  UserCheck
 } from 'lucide-react';
 import { InterglassEmblem } from './InterglassLogo';
+import { UserAccount } from '../types';
 
 interface TopNavbarProps {
   portalTab?: 'quotations' | 'cost_sheet';
@@ -39,6 +43,8 @@ interface TopNavbarProps {
   cancellationReason?: string;
   isConfirmed?: boolean;
   salesmanName?: string;
+  currentUser?: UserAccount;
+  onLogout?: () => void;
 }
 
 export const TopNavbar: React.FC<TopNavbarProps> = ({
@@ -62,8 +68,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   cancellationReason,
   isConfirmed = false,
   salesmanName,
+  currentUser,
+  onLogout,
 }) => {
   const isLocked = isCancelled || isConfirmed;
+  const isProduction = currentUser?.role === 'PRODUCTION';
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm print:hidden">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-4">
@@ -130,85 +139,97 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 
         {/* Center: Primary Portal Tabs & Sub-view Switcher */}
         <div className="flex items-center gap-2">
-          {/* Primary Tabs: Quotations Portal vs COST SHEET */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
-            <button
-              type="button"
-              onClick={() => setPortalTab && setPortalTab('quotations')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                portalTab === 'quotations'
-                  ? 'bg-white text-[#7B1818] shadow-xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-              title="Quotation Builder & Documents"
-            >
-              <FileText className="w-3.5 h-3.5 text-[#7B1818]" />
-              <span>Quotations Portal</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setPortalTab && setPortalTab('cost_sheet')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                portalTab === 'cost_sheet'
-                  ? 'bg-white text-indigo-700 shadow-xs font-bold'
-                  : 'text-slate-600 hover:text-indigo-700'
-              }`}
-              title="Internal Estimation Cost Sheet & Profit Margins"
-            >
-              <Calculator className="w-3.5 h-3.5 text-indigo-600" />
-              <span>COST SHEET</span>
-            </button>
-          </div>
-
-          {/* Sub-view Switcher when on Quotations Portal */}
-          {portalTab === 'quotations' && (
-            <div className="hidden md:flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
-              <button
-                type="button"
-                onClick={() => setActiveTab('edit')}
-                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                  activeTab === 'edit'
-                    ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Edit3 className="w-3.5 h-3.5 text-blue-600" />
-                <span className="hidden sm:inline">{isLocked ? 'Specs' : 'Form &'} </span>
-                <span>{isLocked ? '(Locked)' : 'Builder'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('preview')}
-                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                  activeTab === 'preview'
-                    ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Eye className="w-3.5 h-3.5 text-slate-500" />
-                <span className="hidden sm:inline">Quotation </span><span>Preview</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('job_card')}
-                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                  activeTab === 'job_card'
-                    ? 'bg-white text-emerald-800 shadow-xs font-bold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Factory Job Card with sizes and specs, zero amounts, zero terms"
-              >
-                <ClipboardList className="w-3.5 h-3.5 text-emerald-600" />
-                <span className="hidden sm:inline">Job </span><span>Card</span>
-              </button>
+          {isProduction ? (
+            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-lg text-xs font-bold shadow-2xs">
+              <ClipboardList className="w-4 h-4 text-emerald-700" />
+              <span>FACTORY JOB CARD</span>
+              <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded bg-emerald-700 text-white shadow-2xs">
+                Production Only
+              </span>
             </div>
+          ) : (
+            <>
+              {/* Primary Tabs: Quotations Portal vs COST SHEET */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setPortalTab && setPortalTab('quotations')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                    portalTab === 'quotations'
+                      ? 'bg-white text-[#7B1818] shadow-xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Quotation Builder & Documents"
+                >
+                  <FileText className="w-3.5 h-3.5 text-[#7B1818]" />
+                  <span>Quotations Portal</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPortalTab && setPortalTab('cost_sheet')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                    portalTab === 'cost_sheet'
+                      ? 'bg-white text-indigo-700 shadow-xs font-bold'
+                      : 'text-slate-600 hover:text-indigo-700'
+                  }`}
+                  title="Internal Estimation Cost Sheet & Profit Margins"
+                >
+                  <Calculator className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>COST SHEET</span>
+                </button>
+              </div>
+
+              {/* Sub-view Switcher when on Quotations Portal */}
+              {portalTab === 'quotations' && (
+                <div className="hidden md:flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('edit')}
+                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                      activeTab === 'edit'
+                        ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="hidden sm:inline">{isLocked ? 'Specs' : 'Form &'} </span>
+                    <span>{isLocked ? '(Locked)' : 'Builder'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('preview')}
+                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                      activeTab === 'preview'
+                        ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Eye className="w-3.5 h-3.5 text-slate-500" />
+                    <span className="hidden sm:inline">Quotation </span><span>Preview</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('job_card')}
+                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                      activeTab === 'job_card'
+                        ? 'bg-white text-emerald-800 shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title="Factory Job Card with sizes and specs, zero amounts, zero terms"
+                  >
+                    <ClipboardList className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="hidden sm:inline">Job </span><span>Card</span>
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
 
         {/* Right: Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Quick Save button - hidden if locked */}
-          {!isLocked && onSaveCurrentQuote && (
+          {/* Quick Save button - hidden if locked or production */}
+          {!isLocked && !isProduction && onSaveCurrentQuote && (
             <button
               type="button"
               onClick={onSaveCurrentQuote}
@@ -220,8 +241,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             </button>
           )}
 
-          {/* Add Glass Section (+) - hidden if locked */}
-          {!isLocked && (
+          {/* Add Glass Section (+) - hidden if locked or production */}
+          {!isLocked && !isProduction && (
             <button
               type="button"
               onClick={onAddGlassSection}
@@ -238,7 +259,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             type="button"
             onClick={onPrint}
             className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-xs transition-colors cursor-pointer"
-            title="Print Quotation according to template"
+            title={isProduction ? "Print Job Card" : "Print Quotation according to template"}
           >
             <Printer className="w-3.5 h-3.5 text-slate-600" />
             <span className="hidden sm:inline">Print</span>
@@ -259,6 +280,38 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             )}
             <span>PDF</span>
           </button>
+
+          {/* Current User Session & Logout */}
+          {currentUser && (
+            <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200 ml-1">
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-[11px] text-white ${
+                  currentUser.role === 'ADMIN'
+                    ? 'bg-red-700'
+                    : currentUser.role === 'ESTIMATION'
+                    ? 'bg-blue-700'
+                    : 'bg-emerald-700'
+                }`}
+                title={`${currentUser.username} (${currentUser.role})`}
+              >
+                {currentUser.username.substring(0, 2).toUpperCase()}
+              </div>
+              <div className="hidden xl:block text-left">
+                <div className="text-[11px] font-bold text-slate-800 leading-none">{currentUser.username}</div>
+                <div className="text-[9px] uppercase font-bold text-slate-500 mt-0.5">{currentUser.role}</div>
+              </div>
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="p-1.5 text-slate-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                  title="Sign Out"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

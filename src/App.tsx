@@ -19,7 +19,7 @@ import {
   Edit3,
   Eye
 } from 'lucide-react';
-import { Quotation, GlassSection, GlassItem } from './types';
+import { Quotation, GlassSection, GlassItem, UserAccount } from './types';
 import {
   createBlankQuotation,
   createSampleQuotation,
@@ -37,11 +37,13 @@ import {
   initializeSampleIfEmpty,
   STORAGE_KEY,
 } from './utils/quotationStorage';
+import { getCurrentUser, logoutUser } from './utils/userStorage';
 import { calculateQuotationTotals } from './utils/calculations';
 import { convertNumberToWords } from './utils/numberToWords';
 import { exportToPdf } from './utils/pdfGenerator';
 import { TopNavbar } from './components/TopNavbar';
 import { DashboardView } from './components/DashboardView';
+import { LoginScreen } from './components/LoginScreen';
 import { CompanyAndClientCard } from './components/CompanyAndClientCard';
 import { GlassSectionCard } from './components/GlassSectionCard';
 import { QuotationDocument } from './components/QuotationDocument';
@@ -51,6 +53,9 @@ import { SavedQuotationsModal } from './components/SavedQuotationsModal';
 import { PasteExcelModal } from './components/PasteExcelModal';
 
 export default function App() {
+  // Current logged in user session
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => getCurrentUser());
+
   // App starts from Dashboard as requested
   const [viewMode, setViewMode] = useState<'dashboard' | 'portal'>('dashboard');
 
@@ -108,6 +113,20 @@ export default function App() {
     showNotification(`Created new quotation ${newQuote.from.refNo}`, 'success');
   };
 
+  // Auth handlers
+  const handleLoginSuccess = (user: UserAccount) => {
+    setCurrentUser(user);
+    setViewMode('dashboard');
+    showNotification(`Welcome back, ${user.username}! Signed in as ${user.role}.`, 'success');
+  };
+
+  const handleLogout = () => {
+    logoutUser();
+    setCurrentUser(null);
+    setViewMode('dashboard');
+    showNotification('Logged out successfully.', 'info');
+  };
+
   // DASHBOARD ACTION: Open existing quote
   const handleOpenQuotation = (
     targetQuote: Quotation,
@@ -115,8 +134,13 @@ export default function App() {
     targetPortalTab: 'quotations' | 'cost_sheet' = 'quotations'
   ) => {
     setQuotation(targetQuote);
-    setActiveTab(tab);
-    setPortalTab(targetPortalTab);
+    if (currentUser?.role === 'PRODUCTION') {
+      setActiveTab('job_card');
+      setPortalTab('quotations');
+    } else {
+      setActiveTab(tab);
+      setPortalTab(targetPortalTab);
+    }
     setViewMode('portal');
   };
 
@@ -356,8 +380,35 @@ export default function App() {
     );
   };
 
+  if (!currentUser) {
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  const isProductionUser = currentUser.role === 'PRODUCTION';
+  const isAdminUser = currentUser.role === 'ADMIN';
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans">
+      {/* Notifications banner */}
+      {notification && (
+        <div
+          className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg border text-sm font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200 ${
+            notification.type === 'error'
+              ? 'bg-red-50 text-red-900 border-red-200'
+              : notification.type === 'info'
+              ? 'bg-blue-50 text-blue-900 border-blue-200'
+              : 'bg-emerald-50 text-emerald-900 border-emerald-200'
+          }`}
+        >
+          {notification.type === 'error' ? (
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          )}
+          <span>{notification.message}</span>
+        </div>
+      )}
+
       {/* VIEW 1: DASHBOARD VIEW */}
       {viewMode === 'dashboard' ? (
         <DashboardView
@@ -371,6 +422,9 @@ export default function App() {
           onLoadSample={handleLoadSample}
           onExportBackup={handleExportBackup}
           onImportBackup={handleImportBackup}
+          currentUser={currentUser}
+          onLogout={handleLogout}
+          onNotification={showNotification}
         />
       ) : (() => {
         const isLocked = quotation.status === 'cancelled' || quotation.status === 'confirmed';
@@ -382,7 +436,7 @@ export default function App() {
             <TopNavbar
               portalTab={portalTab}
               setPortalTab={setPortalTab}
-              activeTab={activeTab}
+              activeTab={isProductionUser ? 'job_card' : activeTab}
               setActiveTab={setActiveTab}
               isGeneratingPdf={isGeneratingPdf}
               onPrint={handlePrint}
@@ -393,13 +447,13 @@ export default function App() {
               onOpenHistory={() => setIsHistoryOpen(true)}
               onBackToDashboard={() => {
                 // Ensure current changes are saved and return to dashboard
-                if (!isLocked) {
+                if (!isLocked && !isProductionUser) {
                   saveQuotation(quotation);
                 }
                 setQuotations(getSavedQuotations());
                 setViewMode('dashboard');
               }}
-              onSaveCurrentQuote={!isLocked ? handleSaveCurrentQuote : undefined}
+              onSaveCurrentQuote={!isLocked && !isProductionUser ? handleSaveCurrentQuote : undefined}
               glassSectionCount={quotation.glassSections.length}
               currentRefNo={quotation.from?.refNo}
               clientName={quotation.client?.name}
@@ -407,88 +461,110 @@ export default function App() {
               cancellationReason={quotation.cancellationReason}
               isConfirmed={quotation.status === 'confirmed'}
               salesmanName={quotation.salesmanName}
+              currentUser={currentUser}
+              onLogout={handleLogout}
             />
 
             {/* Main Content Area */}
             <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
-              {/* Primary Tabs: 1st Tab is Quotations Portal, 2nd Tab is COST SHEET */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 mb-6 gap-3">
-                <div className="flex items-center gap-2 sm:gap-4">
-                  {/* Tab 1: Quotations Portal */}
-                  <button
-                    type="button"
-                    onClick={() => setPortalTab('quotations')}
-                    className={`pb-3 px-3 sm:px-4 text-sm sm:text-base font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
-                      portalTab === 'quotations'
-                        ? 'border-[#7B1818] text-[#7B1818]'
-                        : 'border-transparent text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-[#7B1818]" />
-                    <span>Quotations Portal</span>
-                  </button>
-
-                  {/* Tab 2: COST SHEET Tab */}
-                  <button
-                    type="button"
-                    onClick={() => setPortalTab('cost_sheet')}
-                    className={`pb-3 px-3 sm:px-4 text-sm sm:text-base font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
-                      portalTab === 'cost_sheet'
-                        ? 'border-indigo-600 text-indigo-900 bg-indigo-50/60 rounded-t-lg'
-                        : 'border-transparent text-slate-500 hover:text-indigo-700'
-                    }`}
-                  >
-                    <Calculator className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" />
-                    <span>COST SHEET</span>
-                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
-                      Costing & Margins
-                    </span>
-                  </button>
-                </div>
-
-                {/* Sub-view switcher for Quotations Portal */}
-                {portalTab === 'quotations' && (
-                  <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs mb-2 sm:mb-0">
+              {/* If user is PRODUCTION role: strictly Job Card Document only */}
+              {isProductionUser ? (
+                <div className="space-y-4">
+                  <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between text-emerald-950 text-xs font-semibold">
+                    <div className="flex items-center gap-2">
+                      <ClipboardList className="w-4 h-4 text-emerald-700 shrink-0" />
+                      <span>Authorized Factory Production Job Card • Document View</span>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => setActiveTab('edit')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                        activeTab === 'edit'
-                          ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                      onClick={() => setViewMode('dashboard')}
+                      className="px-3 py-1 bg-white hover:bg-emerald-100 border border-emerald-300 rounded-lg text-emerald-900 cursor-pointer font-bold transition-colors"
                     >
-                      <Edit3 className="w-3.5 h-3.5 text-blue-600" />
-                      <span>{isLocked ? 'Specs (Locked)' : 'Form & Builder'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('preview')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                        activeTab === 'preview'
-                          ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <Eye className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Quotation Preview</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('job_card')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                        activeTab === 'job_card'
-                          ? 'bg-white text-emerald-800 shadow-xs font-bold'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                      title="Factory Job Card without amounts or terms"
-                    >
-                      <ClipboardList className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Job Card</span>
+                      ← Back to Job Cards List
                     </button>
                   </div>
-                )}
-              </div>
+                  <JobCardDocument quotation={quotation} />
+                </div>
+              ) : (
+                <>
+                  {/* Primary Tabs: 1st Tab is Quotations Portal, 2nd Tab is COST SHEET */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 mb-6 gap-3">
+                    <div className="flex items-center gap-2 sm:gap-4">
+                      {/* Tab 1: Quotations Portal */}
+                      <button
+                        type="button"
+                        onClick={() => setPortalTab('quotations')}
+                        className={`pb-3 px-3 sm:px-4 text-sm sm:text-base font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+                          portalTab === 'quotations'
+                            ? 'border-[#7B1818] text-[#7B1818]'
+                            : 'border-transparent text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-[#7B1818]" />
+                        <span>Quotations Portal</span>
+                      </button>
+
+                      {/* Tab 2: COST SHEET Tab */}
+                      <button
+                        type="button"
+                        onClick={() => setPortalTab('cost_sheet')}
+                        className={`pb-3 px-3 sm:px-4 text-sm sm:text-base font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+                          portalTab === 'cost_sheet'
+                            ? 'border-indigo-600 text-indigo-900 bg-indigo-50/60 rounded-t-lg'
+                            : 'border-transparent text-slate-500 hover:text-indigo-700'
+                        }`}
+                      >
+                        <Calculator className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" />
+                        <span>COST SHEET</span>
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
+                          Costing & Margins
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Sub-view switcher for Quotations Portal */}
+                    {portalTab === 'quotations' && (
+                      <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs mb-2 sm:mb-0">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('edit')}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                            activeTab === 'edit'
+                              ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-blue-600" />
+                          <span>{isLocked ? 'Specs (Locked)' : 'Form & Builder'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('preview')}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                            activeTab === 'preview'
+                              ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          <Eye className="w-3.5 h-3.5 text-slate-500" />
+                          <span>Quotation Preview</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('job_card')}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
+                            activeTab === 'job_card'
+                              ? 'bg-white text-emerald-800 shadow-xs font-bold'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                          title="Factory Job Card without amounts or terms"
+                        >
+                          <ClipboardList className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Job Card</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
 
               {/* 2nd Tab: COST SHEET View */}
               {portalTab === 'cost_sheet' ? (
@@ -549,14 +625,20 @@ export default function App() {
                         >
                           Back to Dashboard
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleUnconfirmQuotation(quotation.id)}
-                          className="px-3.5 py-1.5 text-xs font-semibold bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-lg transition-colors cursor-pointer"
-                          title="Unconfirm order and unlock editing"
-                        >
-                          Unlock Editing
-                        </button>
+                        {isAdminUser ? (
+                          <button
+                            type="button"
+                            onClick={() => handleUnconfirmQuotation(quotation.id)}
+                            className="px-3.5 py-1.5 text-xs font-semibold bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-lg transition-colors cursor-pointer"
+                            title="Unconfirm order and unlock editing"
+                          >
+                            Unlock Editing
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-slate-500 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200">
+                            Unconfirming restricted to ADMIN (HOD)
+                          </span>
+                        )}
                       </div>
                     </div>
                   )}
@@ -861,7 +943,9 @@ export default function App() {
                 />
               </div>
             )}
-            </>
+                  </>
+                )}
+              </>
             )}
             </main>
           </>
