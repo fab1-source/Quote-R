@@ -1,0 +1,6 @@
+{
+  "name": "Glass Quotation Generator",
+  "description": "Intranet glass quotation system with Excel paste, multi-glass sections, automated area calculations, print formatting, and local PDF export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
