@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Quotation } from '../types';
 import { InterglassLogoBanner } from './InterglassLogo';
 import { calculateSectionTotals, calculateQuotationTotals } from '../utils/calculations';
+import { exportJobCardToExcel, copySizesToClipboard, extractOptimizerItems } from '../utils/optimizerExport';
+import { FileSpreadsheet, Copy, Check, Sparkles, MessageSquare } from 'lucide-react';
 
 interface JobCardDocumentProps {
   quotation: Quotation;
@@ -9,17 +11,108 @@ interface JobCardDocumentProps {
 
 export const JobCardDocument: React.FC<JobCardDocumentProps> = ({ quotation }) => {
   const { grandTotalQty, grandTotalSqm } = calculateQuotationTotals(quotation);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const optimizerItems = extractOptimizerItems(quotation);
 
   const confirmedDateStr = quotation.confirmedAt
     ? new Date(quotation.confirmedAt).toLocaleDateString('en-GB')
     : quotation.from?.dated || '';
 
+  const handleExportExcel = () => {
+    try {
+      setIsExporting(true);
+      exportJobCardToExcel(quotation);
+      setCopyFeedback(`Exported Excel (.xlsx) with ${optimizerItems.length} cutting sizes!`);
+      setTimeout(() => setCopyFeedback(null), 4000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to export Excel file: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleCopySizes = async () => {
+    try {
+      const { count, totalPcs } = await copySizesToClipboard(quotation);
+      setCopyFeedback(`Copied ${count} sizes (${totalPcs} pcs) to clipboard! Ready to paste into Optimizer.`);
+      setTimeout(() => setCopyFeedback(null), 4500);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to copy sizes to clipboard');
+    }
+  };
+
   return (
-    <div
-      id="jobcard-print-container"
-      className="bg-white text-neutral-900 mx-auto font-sans text-[11px] leading-snug print:text-[10px] print:leading-tight shadow-lg print:shadow-none border-2 border-black p-4 sm:p-7 max-w-[960px] select-text"
-      style={{ minHeight: '1050px' }}
-    >
+    <div className="space-y-3">
+      {/* Interactive Sheet Optimizer Toolbar (Hidden during print / PDF) */}
+      <div className="print:hidden bg-gradient-to-r from-emerald-900 to-slate-900 text-white p-3.5 rounded-xl shadow-md flex flex-wrap items-center justify-between gap-3 border border-emerald-700/50">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center shrink-0">
+            <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-xs text-white">External Sheet Optimizer Export</span>
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.2 rounded bg-emerald-500/30 text-emerald-200 border border-emerald-400/30">
+                Cutting Sizes
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300">
+              Download formatted Excel sheet or 1-click copy sizes directly into cutting optimizer software (Optima, Perfect Cut, Opty-Way).
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Summary Pills */}
+          <div className="hidden md:flex items-center gap-2 text-xs bg-black/30 border border-white/10 px-2.5 py-1.5 rounded-lg text-slate-200 font-mono">
+            <span><strong>{optimizerItems.length}</strong> Sizes</span>
+            <span>•</span>
+            <span><strong>{grandTotalQty}</strong> Pcs</span>
+            <span>•</span>
+            <span><strong>{grandTotalSqm.toFixed(2)}</strong> m²</span>
+          </div>
+
+          {/* Copy Sizes Button */}
+          <button
+            type="button"
+            onClick={handleCopySizes}
+            className="px-3.5 py-1.5 text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+            title="Copies Width, Height, Qty, and Tag formatted with tabs for direct Ctrl+V pasting into Excel or cutting software"
+          >
+            <Copy className="w-3.5 h-3.5 text-emerald-300" />
+            <span>Copy Sizes for Optimizer</span>
+          </button>
+
+          {/* Export to Excel (.xlsx) */}
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            disabled={isExporting}
+            className="px-4 py-1.5 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-sm active:scale-95"
+            title="Download full Microsoft Excel workbook (.xlsx) with cutting sizes sheet and direct import table"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-950" />
+            <span>Export to Excel (.xlsx)</span>
+          </button>
+        </div>
+
+        {/* Copy Feedback Notification Banner */}
+        {copyFeedback && (
+          <div className="w-full mt-1 bg-emerald-500/20 border border-emerald-400/50 text-emerald-200 px-3 py-1.5 rounded-lg text-xs flex items-center gap-2 animate-fadeIn">
+            <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-medium">{copyFeedback}</span>
+          </div>
+        )}
+      </div>
+
+      <div
+        id="jobcard-print-container"
+        className="bg-white text-neutral-900 mx-auto font-sans text-[11px] leading-snug print:text-[10px] print:leading-tight shadow-lg print:shadow-none border-2 border-black p-4 sm:p-7 max-w-[960px] select-text"
+        style={{ minHeight: '1050px' }}
+      >
       {/* 1. Header: Official Logo Banner & Job Card Title */}
       <div className="pb-2 mb-2 border-b-[2px] border-black flex flex-col items-center">
         <InterglassLogoBanner className="my-0.5" />
@@ -301,6 +394,19 @@ export const JobCardDocument: React.FC<JobCardDocumentProps> = ({ quotation }) =
             </p>
           )}
         </div>
+
+        {/* Factory Manager's Latest Comments */}
+        {quotation.factoryComments && (
+          <div className="mt-2 pt-1.5 border-t border-dashed border-neutral-300 bg-amber-50/70 p-2 rounded border border-amber-200">
+            <span className="font-bold uppercase tracking-wider text-[9.5px] text-amber-900 block mb-0.5 flex items-center gap-1">
+              <MessageSquare className="w-3 h-3 text-amber-700" />
+              <span>Factory Manager Latest Order Notes:</span>
+            </span>
+            <p className="text-slate-900 font-medium whitespace-pre-line text-[10px]">
+              {quotation.factoryComments}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* NOTE: TERMS AND CONDITIONS AND BANK DETAILS ARE EXCLUDED AS REQUESTED */}
@@ -350,5 +456,6 @@ export const JobCardDocument: React.FC<JobCardDocumentProps> = ({ quotation }) =
         </div>
       </div>
     </div>
+  </div>
   );
 };

@@ -69,6 +69,7 @@ export interface Quotation {
   committedDeliveryDate?: string; // e.g. "YYYY-MM-DD"
   isCompleted?: boolean;
   isInvoiced?: boolean;
+  factoryComments?: string;
   client: ClientInfo;
   from: FromInfo;
   scopeOfWork: string;

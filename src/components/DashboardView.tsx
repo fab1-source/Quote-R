@@ -28,12 +28,14 @@ import {
   LogOut,
   Users as UsersIcon,
   Shield,
-  Clock
+  Clock,
+  MessageSquare
 } from 'lucide-react';
 import { Quotation, UserAccount } from '../types';
 import { InterglassEmblem } from './InterglassLogo';
 import { calculateQuotationTotals } from '../utils/calculations';
 import { generateNextQuoteNumber, ConfirmationDetails, getDefaultDeliveryDate, updateJobCardFlags } from '../utils/quotationStorage';
+import { exportJobCardToExcel } from '../utils/optimizerExport';
 import { UsersManagementView } from './UsersManagementView';
 
 interface DashboardViewProps {
@@ -54,8 +56,89 @@ interface DashboardViewProps {
   currentUser: UserAccount;
   onLogout: () => void;
   onNotification?: (msg: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
-  onUpdateJobCardFlags?: (id: string, updates: { isCompleted?: boolean; isInvoiced?: boolean; committedDeliveryDate?: string }) => void;
+  onUpdateJobCardFlags?: (
+    id: string,
+    updates: {
+      isCompleted?: boolean;
+      isInvoiced?: boolean;
+      committedDeliveryDate?: string;
+      factoryComments?: string;
+    }
+  ) => void;
 }
+
+/**
+ * Inline editable comments cell for Factory Manager in Running Jobs
+ */
+const FactoryCommentsCell: React.FC<{
+  quotation: Quotation;
+  onSaveComment: (id: string, comment: string) => void;
+}> = ({ quotation, onSaveComment }) => {
+  const [commentText, setCommentText] = useState(quotation.factoryComments || '');
+  const [isSaved, setIsSaved] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+
+  React.useEffect(() => {
+    setCommentText(quotation.factoryComments || '');
+  }, [quotation.factoryComments]);
+
+  const handleSave = () => {
+    onSaveComment(quotation.id, commentText);
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 2000);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleSave();
+    }
+  };
+
+  const hasUnsavedChanges = commentText !== (quotation.factoryComments || '');
+
+  return (
+    <div className="w-full min-w-[210px] max-w-[280px]" onClick={(e) => e.stopPropagation()}>
+      <div className="relative">
+        <textarea
+          rows={isFocused || commentText.length > 30 ? 2 : 1}
+          value={commentText}
+          onChange={(e) => {
+            setCommentText(e.target.value);
+            setIsSaved(false);
+          }}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => {
+            setIsFocused(false);
+            if (commentText !== (quotation.factoryComments || '')) {
+              handleSave();
+            }
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder="Factory note (e.g. cutting done, site ready)..."
+          className="w-full text-xs p-1.5 border rounded-lg border-slate-300 bg-white hover:border-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 focus:outline-none resize-none transition-all placeholder:text-slate-400 text-slate-800 leading-tight"
+        />
+        {isSaved && (
+          <span className="absolute bottom-1.5 right-1.5 text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1 py-0.2 rounded border border-emerald-300">
+            Saved ✓
+          </span>
+        )}
+      </div>
+      {hasUnsavedChanges && (
+        <div className="flex items-center justify-between mt-0.5">
+          <span className="text-[10px] text-slate-400">Ctrl+Enter to save</span>
+          <button
+            type="button"
+            onClick={handleSave}
+            className="text-[10px] font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
+          >
+            Save Note
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   quotations,
@@ -97,6 +180,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [currentUser.role, dashboardTab]);
   // Sub-filter for quotations list: 'all' (shows all quotes with confirmed in light greenish tint) | 'confirmed' | 'pending' | 'cancelled'
   const [quotesFilter, setQuotesFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled'>('all');
+
+  // Sub-filter for job cards: 'running' (in production) | 'completed' (invoiced)
+  const [jobCardsSubTab, setJobCardsSubTab] = useState<'running' | 'completed'>('running');
 
   // Cancellation Modal State
   const [quoteToCancel, setQuoteToCancel] = useState<Quotation | null>(null);
@@ -188,6 +274,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
+  // Toggle Job Card Invoiced flag:
+  // When checked: marks as invoiced, which moves it from 'running' to 'completed' tab.
+  // When unchecked: unmarks as invoiced, which moves it back from 'completed' to 'running' tab.
+  const handleToggleInvoiced = (id: string) => {
+    const target = quotations.find((q) => q.id === id);
+    if (!target) return;
+    const newInvoiced = !target.isInvoiced;
+    if (onUpdateJobCardFlags) {
+      onUpdateJobCardFlags(id, { isInvoiced: newInvoiced, isCompleted: newInvoiced });
+    } else {
+      updateJobCardFlags(id, { isInvoiced: newInvoiced, isCompleted: newInvoiced });
+    }
+    if (onNotification) {
+      onNotification(
+        newInvoiced
+          ? `Job Card ${target.from?.refNo || ''} marked as Invoiced and moved to Completed jobs`
+          : `Job Card ${target.from?.refNo || ''} unmarked and moved back to Running jobs`,
+        newInvoiced ? 'success' : 'info'
+      );
+    }
+  };
+
   // Calculates daily filling progress bar and status for job cards
   const getDeliveryProgress = (q: Quotation) => {
     const deliveryDateStr = q.committedDeliveryDate || getDefaultDeliveryDate(4);
@@ -275,6 +383,65 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   };
 
+  // Save Factory Comment for a Job Card
+  const handleSaveComment = (id: string, factoryComments: string) => {
+    const target = quotations.find((q) => q.id === id);
+    if (onUpdateJobCardFlags) {
+      onUpdateJobCardFlags(id, { factoryComments });
+    } else {
+      updateJobCardFlags(id, { factoryComments });
+    }
+    if (onNotification) {
+      onNotification(`Saved factory comments for ${target?.from?.refNo || 'order'}`, 'success');
+    }
+  };
+
+  // OVERDUE ORDERS WARNING LOGIC (Running jobs exceeding delivery timeline - alert every 3 hours)
+  const OVERDUE_WARNING_KEY = 'interglass_overdue_warning_dismissed_at';
+  const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+
+  // Compute active running jobs that are beyond committed delivery timeline
+  const overdueRunningJobs = useMemo(() => {
+    return quotations.filter((q) => {
+      if (q.status !== 'confirmed' || q.isInvoiced) return false;
+      const prog = getDeliveryProgress(q);
+      return prog.daysRemaining < 0;
+    });
+  }, [quotations]);
+
+  const [showOverdueModal, setShowOverdueModal] = useState(false);
+
+  // Check every minute and on initial mount if 3-hour warning interval has elapsed
+  React.useEffect(() => {
+    if (overdueRunningJobs.length === 0) return;
+
+    const checkOverdueAlert = () => {
+      try {
+        const lastDismissedStr = localStorage.getItem(OVERDUE_WARNING_KEY);
+        const lastDismissed = lastDismissedStr ? parseInt(lastDismissedStr, 10) : 0;
+        const now = Date.now();
+        if (now - lastDismissed >= THREE_HOURS_MS) {
+          setShowOverdueModal(true);
+        }
+      } catch (e) {
+        console.error('Error checking overdue warning time', e);
+      }
+    };
+
+    checkOverdueAlert();
+    const interval = setInterval(checkOverdueAlert, 60 * 1000);
+    return () => clearInterval(interval);
+  }, [overdueRunningJobs.length]);
+
+  const handleDismissOverdueWarning = () => {
+    try {
+      localStorage.setItem(OVERDUE_WARNING_KEY, Date.now().toString());
+    } catch (e) {
+      console.error(e);
+    }
+    setShowOverdueModal(false);
+  };
+
   // Submit Confirmation (Moves confirmed quotation to Job Cards with exact saved quotation values and committed delivery date)
   const handleConfirmOrderSubmit = () => {
     if (!quoteToConfirm) return;
@@ -354,11 +521,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const tabCounts = useMemo(() => {
     let unconfirmedQuotesCount = 0;
     let confirmedJobCardsCount = 0;
+    let runningJobCardsCount = 0;
+    let completedJobCardsCount = 0;
     let cancelledCount = 0;
 
     quotations.forEach((q) => {
       if (q.status === 'confirmed') {
         confirmedJobCardsCount++;
+        if (q.isInvoiced) {
+          completedJobCardsCount++;
+        } else {
+          runningJobCardsCount++;
+        }
       } else if (q.status === 'cancelled') {
         cancelledCount++;
       } else {
@@ -370,6 +544,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       unconfirmedQuotesCount,
       confirmedCount: confirmedJobCardsCount,
       confirmedJobCardsCount,
+      runningJobCardsCount,
+      completedJobCardsCount,
       cancelledCount,
       totalCount: quotations.length,
       activeAndConfirmedCount: unconfirmedQuotesCount + confirmedJobCardsCount,
@@ -396,9 +572,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             return false;
           }
         }
-        // Tab 2: JOB CARDS (Confirmed production orders only)
+        // Tab 2: JOB CARDS (Confirmed production orders only, filtered by Running vs Completed sub-tab)
         else if (dashboardTab === 'job_cards') {
           if (q.status !== 'confirmed') {
+            return false;
+          }
+          if (jobCardsSubTab === 'running' && q.isInvoiced) {
+            return false;
+          }
+          if (jobCardsSubTab === 'completed' && !q.isInvoiced) {
             return false;
           }
         }
@@ -410,8 +592,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         const attnMatch = (q.client?.kindAttn || '').toLowerCase().includes(query);
         const titleMatch = (q.title || '').toLowerCase().includes(query);
         const salesmanMatch = (q.salesmanName || '').toLowerCase().includes(query);
+        const commentsMatch = (q.factoryComments || '').toLowerCase().includes(query);
 
-        const matchesSearch = !query || refMatch || clientMatch || emirateMatch || attnMatch || titleMatch || salesmanMatch;
+        const matchesSearch = !query || refMatch || clientMatch || emirateMatch || attnMatch || titleMatch || salesmanMatch || commentsMatch;
 
         if (!matchesSearch) return false;
 
@@ -438,7 +621,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         // Default: date-desc (newest first)
         return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
       });
-  }, [quotations, dashboardTab, quotesFilter, searchTerm, selectedMonth, sortBy]);
+  }, [quotations, dashboardTab, quotesFilter, jobCardsSubTab, searchTerm, selectedMonth, sortBy]);
 
   // Calculate Overall Dashboard Metrics
   const metrics = useMemo(() => {
@@ -503,6 +686,61 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       count: confirmedList.length,
       totalPcs,
       totalSqm,
+    };
+  }, [quotations]);
+
+  // Financial & Production totals for Job Cards: Running, Completed, and Final Total
+  const jobCardsMetrics = useMemo(() => {
+    let runningAmount = 0;
+    let runningCount = 0;
+    let runningPcs = 0;
+    let runningSqm = 0;
+
+    let completedAmount = 0;
+    let completedCount = 0;
+    let completedPcs = 0;
+    let completedSqm = 0;
+
+    quotations.forEach((q) => {
+      if (q.status !== 'confirmed') return;
+
+      const { totalAmountAED, grandTotalQty, grandTotalSqm } = calculateQuotationTotals(q);
+      const amt = typeof q.confirmedTotalAmount === 'number' && q.confirmedTotalAmount > 0
+        ? q.confirmedTotalAmount
+        : totalAmountAED;
+      const pcs = typeof q.confirmedQty === 'number' ? q.confirmedQty : grandTotalQty;
+
+      if (q.isInvoiced) {
+        completedCount++;
+        completedAmount += amt;
+        completedPcs += pcs;
+        completedSqm += grandTotalSqm;
+      } else {
+        runningCount++;
+        runningAmount += amt;
+        runningPcs += pcs;
+        runningSqm += grandTotalSqm;
+      }
+    });
+
+    const finalAmount = runningAmount + completedAmount;
+    const finalCount = runningCount + completedCount;
+    const finalPcs = runningPcs + completedPcs;
+    const finalSqm = runningSqm + completedSqm;
+
+    return {
+      runningAmount,
+      runningCount,
+      runningPcs,
+      runningSqm,
+      completedAmount,
+      completedCount,
+      completedPcs,
+      completedSqm,
+      finalAmount,
+      finalCount,
+      finalPcs,
+      finalSqm,
     };
   }, [quotations]);
 
@@ -837,8 +1075,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {tabCounts.confirmedJobCardsCount}
               </span>
               {tabCounts.confirmedJobCardsCount > 0 && (
-                <span className="hidden md:inline-block text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
-                  Factory Orders
+                <span className="hidden md:inline-flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  <span>{tabCounts.runningJobCardsCount} Running</span>
+                  <span>•</span>
+                  <span>{tabCounts.completedJobCardsCount} Completed</span>
                 </span>
               )}
             </button>
@@ -921,12 +1161,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           )}
 
-          {/* Banner note for Job Cards tab */}
+          {/* Status info for Job Cards tab */}
           {dashboardTab === 'job_cards' && (
             <div className="pb-2.5 text-xs text-emerald-800 flex items-center gap-2">
               <span className="bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-lg font-medium flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>Factory Production View: Strictly no amounts, pricing, or commercial terms</span>
+                <ClipboardList className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                <span>Job Cards Production & Invoicing Hub</span>
               </span>
             </div>
           )}
@@ -940,6 +1180,185 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           />
         ) : (
           <>
+            {/* Common Information Box for Job Cards (Visible in both Running and Completed sub-tabs) */}
+            {dashboardTab === 'job_cards' && (
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-2xs mb-6">
+                <div className="flex items-center justify-between pb-3.5 mb-4 border-b border-slate-100 flex-wrap gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900 flex items-center gap-2">
+                      <ClipboardList className="w-4 h-4 text-emerald-700" />
+                      <span>Job Cards Financial & Production Summary</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Live overview tracking active running fabrication vs invoiced completed orders
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-semibold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md border border-slate-200">
+                      Amounts Excl. VAT
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3 Metric Cards: Running Jobs, Completed Jobs, Final Total */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Card 1: Running Jobs */}
+                  <div
+                    onClick={() => setJobCardsSubTab('running')}
+                    className={`p-4 rounded-xl border transition-all cursor-pointer relative overflow-hidden ${
+                      jobCardsSubTab === 'running'
+                        ? 'bg-blue-50/80 border-blue-400 ring-2 ring-blue-500/20 shadow-xs'
+                        : 'bg-slate-50/70 hover:bg-blue-50/40 border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-blue-700" />
+                        <span>Total Running Jobs</span>
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                        {jobCardsMetrics.runningCount} Active
+                      </span>
+                    </div>
+                    <div className="text-xl sm:text-2xl font-mono font-black text-slate-900 tracking-tight">
+                      AED {jobCardsMetrics.runningAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-600 mt-2 pt-2 border-t border-blue-100/70 font-medium">
+                      <span>{jobCardsMetrics.runningPcs.toLocaleString()} Pcs</span>
+                      <span>•</span>
+                      <span>{jobCardsMetrics.runningSqm.toFixed(1)} m² Glass</span>
+                      <span className="ml-auto text-[11px] font-bold text-blue-700 underline">
+                        {jobCardsSubTab === 'running' ? 'Active Tab' : 'Switch Tab →'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Completed Jobs */}
+                  <div
+                    onClick={() => setJobCardsSubTab('completed')}
+                    className={`p-4 rounded-xl border transition-all cursor-pointer relative overflow-hidden ${
+                      jobCardsSubTab === 'completed'
+                        ? 'bg-emerald-50/80 border-emerald-400 ring-2 ring-emerald-500/20 shadow-xs'
+                        : 'bg-slate-50/70 hover:bg-emerald-50/40 border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Total Completed Jobs</span>
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        {jobCardsMetrics.completedCount} Invoiced
+                      </span>
+                    </div>
+                    <div className="text-xl sm:text-2xl font-mono font-black text-slate-900 tracking-tight">
+                      AED {jobCardsMetrics.completedAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-600 mt-2 pt-2 border-t border-emerald-100/70 font-medium">
+                      <span>{jobCardsMetrics.completedPcs.toLocaleString()} Pcs</span>
+                      <span>•</span>
+                      <span>{jobCardsMetrics.completedSqm.toFixed(1)} m² Glass</span>
+                      <span className="ml-auto text-[11px] font-bold text-emerald-700 underline">
+                        {jobCardsSubTab === 'completed' ? 'Active Tab' : 'Switch Tab →'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Final Total (Running + Completed) */}
+                  <div className="p-4 rounded-xl border bg-gradient-to-br from-slate-900 to-slate-800 text-white border-slate-700 shadow-sm relative overflow-hidden">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                        <Calculator className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Final Total (Running + Completed)</span>
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-700 text-slate-200 border border-slate-600">
+                        {jobCardsMetrics.finalCount} Total
+                      </span>
+                    </div>
+                    <div className="text-xl sm:text-2xl font-mono font-black text-amber-400 tracking-tight">
+                      AED {jobCardsMetrics.finalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-300 mt-2 pt-2 border-t border-slate-700 font-medium">
+                      <span>{jobCardsMetrics.finalPcs.toLocaleString()} Pcs</span>
+                      <span>•</span>
+                      <span>{jobCardsMetrics.finalSqm.toFixed(1)} m² Total</span>
+                      <span className="ml-auto text-[10px] uppercase tracking-wider text-amber-300 font-bold">
+                        Grand Total
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sub-Tabs for Job Cards: Running Jobs vs Completed Jobs */}
+            {dashboardTab === 'job_cards' && (
+              <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setJobCardsSubTab('running')}
+                    className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
+                      jobCardsSubTab === 'running'
+                        ? 'bg-blue-700 text-white shadow-xs'
+                        : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4 text-blue-300" />
+                    <span>Running Jobs</span>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-mono font-bold ${
+                        jobCardsSubTab === 'running' ? 'bg-blue-950 text-white' : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {jobCardsMetrics.runningCount}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setJobCardsSubTab('completed')}
+                    className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition cursor-pointer ${
+                      jobCardsSubTab === 'completed'
+                        ? 'bg-emerald-700 text-white shadow-xs'
+                        : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                    <span>Completed Jobs</span>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-mono font-bold ${
+                        jobCardsSubTab === 'completed' ? 'bg-emerald-950 text-white' : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {jobCardsMetrics.completedCount}
+                    </span>
+                  </button>
+
+                  {/* Overdue Warning Button (if any running jobs are beyond delivery timeline) */}
+                  {overdueRunningJobs.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowOverdueModal(true)}
+                      className="px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 bg-red-100 hover:bg-red-200 text-red-900 border border-red-300 transition-all cursor-pointer animate-pulse shadow-2xs"
+                      title="Running orders beyond committed delivery timeline - Click to review warning"
+                    >
+                      <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                      <span>{overdueRunningJobs.length} Overdue Timeline (Alert Every 3h)</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="text-xs text-slate-500 font-medium">
+                  {jobCardsSubTab === 'running' ? (
+                    <span>Click <strong>Invoiced</strong> on any job card to move it to Completed</span>
+                  ) : (
+                    <span>Uncheck <strong>Invoiced</strong> on any job card to return it to Running</span>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Controls Bar: Search & Filters */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-5">
               <div className="relative flex-1 max-w-md">
@@ -948,98 +1367,189 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   type="text"
                   placeholder={
                     dashboardTab === 'job_cards'
-                      ? 'Search job cards by ref, client, salesman, emirate...'
+                      ? `Search ${jobCardsSubTab} job cards by ref, client, salesman...`
                       : 'Search quotations by quote ref, client, salesman...'
                   }
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#7B1818]/20 focus:border-[#7B1818] transition-all shadow-2xs"
                 />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2.5 flex-wrap">
-            {/* Month Filter */}
-            {availableMonths.length > 0 && (
-              <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-2xs text-xs text-slate-600">
-                <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
-                <select
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                  aria-label="Filter by month"
-                  className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer"
-                >
-                  <option value="all">All Months</option>
-                  {availableMonths.map((m) => (
-                    <option key={m} value={m}>
-                      Month {m}
-                    </option>
-                  ))}
-                </select>
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-            )}
 
-            {/* Sort Dropdown */}
-            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-2xs text-xs text-slate-600">
-              <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                aria-label="Sort items"
-                className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer"
-              >
-                <option value="date-desc">Newest First</option>
-                <option value="date-asc">Oldest First</option>
-                {dashboardTab === 'quotations' && <option value="amount-desc">Highest Amount</option>}
-                <option value="ref-desc">Reference (Z-A)</option>
-              </select>
-            </div>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {/* Month Filter */}
+                {availableMonths.length > 0 && (
+                  <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-2xs text-xs text-slate-600">
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
+                    <select
+                      value={selectedMonth}
+                      onChange={(e) => setSelectedMonth(e.target.value)}
+                      aria-label="Filter by month"
+                      className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer"
+                    >
+                      <option value="all">All Months</option>
+                      {availableMonths.map((m) => (
+                        <option key={m} value={m}>
+                          Month {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
-            {/* Sample Loader Shortcut */}
-            <button
-              type="button"
-              onClick={onLoadSample}
-              className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-[#7B1818] bg-white border border-slate-200 hover:border-red-200 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Add sample quotation template"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-              <span>Load Sample</span>
-            </button>
-          </div>
-        </div>
+                {/* Sort Dropdown */}
+                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-2xs text-xs text-slate-600">
+                  <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
+                    aria-label="Sort items"
+                    className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer"
+                  >
+                    <option value="date-desc">Newest First</option>
+                    <option value="date-asc">Oldest First</option>
+                    <option value="amount-desc">Highest Amount</option>
+                    <option value="ref-desc">Reference (Z-A)</option>
+                  </select>
+                </div>
 
-        {/* Content View: When no items match */}
-        {filteredQuotations.length === 0 ? (
-          dashboardTab === 'job_cards' ? (
-            /* Empty State for Job Cards */
-            <div className="bg-white border border-slate-200 rounded-xl p-8 sm:p-12 text-center shadow-2xs">
-              <div className="w-16 h-16 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-center mx-auto mb-4 text-emerald-700">
-                <ClipboardList className="w-8 h-8" />
-              </div>
-              <h3 className="text-base font-bold text-slate-900">No Job Cards in Production Yet</h3>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-md mx-auto">
-                Whenever you confirm a quotation by clicking its <strong>Confirmed</strong> checkbox in the Quotations tab, it will automatically move here as a factory <strong>Job Card</strong> (with piece sizes, glass types, and salesman, but strictly without amounts or terms).
-              </p>
-              <div className="mt-5 flex items-center justify-center gap-3">
+                {/* Sample Loader Shortcut */}
                 <button
                   type="button"
-                  onClick={() => setDashboardTab('quotations')}
-                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg shadow-sm transition cursor-pointer flex items-center gap-2"
+                  onClick={onLoadSample}
+                  className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-[#7B1818] bg-white border border-slate-200 hover:border-red-200 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Add sample quotation template"
                 >
-                  <FileText className="w-4 h-4" />
-                  <span>Go to Quotations List</span>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Load Sample</span>
                 </button>
               </div>
             </div>
-          ) : (
+
+            {/* Overdue Orders Alert Banner (Running Jobs beyond delivery timeline) */}
+            {dashboardTab === 'job_cards' && jobCardsSubTab === 'running' && overdueRunningJobs.length > 0 && (
+              <div className="mb-4 p-3.5 sm:p-4 bg-red-50 border-2 border-red-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-red-950 shadow-2xs">
+                <div className="flex items-start sm:items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <AlertTriangle className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-extrabold text-xs sm:text-sm uppercase tracking-wide text-red-950">
+                        Delivery Timeline Warning • {overdueRunningJobs.length} Running Order{overdueRunningJobs.length > 1 ? 's' : ''} Overdue
+                      </span>
+                      <span className="text-[10px] bg-red-200/90 text-red-900 font-bold px-2 py-0.5 rounded border border-red-300">
+                        Alert Every 3 Hours
+                      </span>
+                    </div>
+                    <p className="text-xs text-red-800 mt-0.5 leading-relaxed">
+                      These running orders have exceeded their committed delivery date. Enter updated comments below or open the job card to review.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 self-end sm:self-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowOverdueModal(true)}
+                    className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 shadow-2xs"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>View Overdue Warning ({overdueRunningJobs.length})</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Content View: When no items match */}
+            {filteredQuotations.length === 0 ? (
+              dashboardTab === 'job_cards' ? (
+                /* Empty State for Job Cards */
+                <div className="bg-white border border-slate-200 rounded-xl p-8 sm:p-12 text-center shadow-2xs">
+                  <div className="w-16 h-16 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-center mx-auto mb-4 text-emerald-700">
+                    <ClipboardList className="w-8 h-8" />
+                  </div>
+                  {jobCardsMetrics.finalCount === 0 ? (
+                    <>
+                      <h3 className="text-base font-bold text-slate-900">No Job Cards in Production Yet</h3>
+                      <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-md mx-auto">
+                        Whenever you confirm a quotation by clicking its <strong>Confirmed</strong> checkbox in the Quotations tab, it will automatically move here as an active <strong>Running Job Card</strong>.
+                      </p>
+                      <div className="mt-5 flex items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setDashboardTab('quotations')}
+                          className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg shadow-sm transition cursor-pointer flex items-center gap-2"
+                        >
+                          <FileText className="w-4 h-4" />
+                          <span>Go to Quotations List</span>
+                        </button>
+                      </div>
+                    </>
+                  ) : searchTerm || selectedMonth !== 'all' ? (
+                    <>
+                      <h3 className="text-base font-bold text-slate-900">No matching job cards found</h3>
+                      <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-md mx-auto">
+                        No job cards match your active search or month filters in the {jobCardsSubTab} tab.
+                      </p>
+                      <div className="mt-4 flex items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSearchTerm('');
+                            setSelectedMonth('all');
+                          }}
+                          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer"
+                        >
+                          Reset Filters
+                        </button>
+                      </div>
+                    </>
+                  ) : jobCardsSubTab === 'running' ? (
+                    <>
+                      <h3 className="text-base font-bold text-slate-900">No Running Jobs</h3>
+                      <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-md mx-auto">
+                        All {jobCardsMetrics.completedCount} confirmed factory order{jobCardsMetrics.completedCount === 1 ? '' : 's'} have been invoiced and moved to the <strong>Completed</strong> tab.
+                      </p>
+                      <div className="mt-5 flex items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setJobCardsSubTab('completed')}
+                          className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg shadow-sm transition cursor-pointer flex items-center gap-2"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>View Completed Jobs ({jobCardsMetrics.completedCount})</span>
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="text-base font-bold text-slate-900">No Completed Jobs Yet</h3>
+                      <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-md mx-auto">
+                        When a running job card is invoiced, check its <strong>Invoiced</strong> box in the Running tab to move it here.
+                      </p>
+                      <div className="mt-5 flex items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setJobCardsSubTab('running')}
+                          className="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold rounded-lg shadow-sm transition cursor-pointer flex items-center gap-2"
+                        >
+                          <Clock className="w-4 h-4" />
+                          <span>View Running Jobs ({jobCardsMetrics.runningCount})</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
             /* Empty State for Quotations */
             <div className="bg-white border border-slate-200 rounded-xl p-8 sm:p-12 text-center shadow-2xs">
               <div className="w-16 h-16 bg-red-50 border border-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4 text-[#7B1818]">
@@ -1109,19 +1619,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )
         ) : dashboardTab === 'job_cards' ? (
           /* ============================================================ */
-          /* TAB 2: FACTORY JOB CARDS TABLE (NO AMOUNTS, NO TERMS)        */
+          /* TAB 2: FACTORY JOB CARDS TABLE                               */
           /* ============================================================ */
-          <div className="bg-white border border-emerald-200 rounded-xl shadow-2xs overflow-hidden">
-            <div className="bg-emerald-50/70 border-b border-emerald-100 px-4 py-2.5 flex items-center justify-between text-xs text-emerald-900 flex-wrap gap-2">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-2xs overflow-hidden">
+            <div className="bg-slate-50/90 border-b border-slate-200 px-4 py-2.5 flex items-center justify-between text-xs text-slate-800 flex-wrap gap-2">
               <div className="flex items-center gap-2 font-semibold">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse inline-block"></span>
-                <span>Production Job Cards ({filteredQuotations.length} Active)</span>
-                <span className="text-emerald-700 font-normal">
-                  • Click any row to open the complete factory copy
+                <span
+                  className={`w-2.5 h-2.5 rounded-full inline-block ${
+                    jobCardsSubTab === 'running' ? 'bg-blue-600 animate-pulse' : 'bg-emerald-600'
+                  }`}
+                ></span>
+                <span>
+                  {jobCardsSubTab === 'running' ? 'Running Job Cards' : 'Completed Job Cards'} ({filteredQuotations.length}{' '}
+                  {jobCardsSubTab === 'running' ? 'Active' : 'Invoiced'})
+                </span>
+                <span className="text-slate-500 font-normal hidden sm:inline">
+                  • Click any row to open the complete job card view
                 </span>
               </div>
-              <span className="text-[11px] text-emerald-700 font-medium italic">
-                Strictly confidential: Prices, rates, VAT, and terms are excluded
+              <span className="text-[11px] text-slate-500 font-medium">
+                {jobCardsSubTab === 'running'
+                  ? 'Check "Invoiced" to mark billed and move to Completed'
+                  : 'Uncheck "Invoiced" to return job card to Running'}
               </span>
             </div>
 
@@ -1129,35 +1648,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
                   <tr className="bg-slate-50/90 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-600 font-bold">
-                    <th className="py-3 px-3 text-left w-36">Stage Checklist</th>
+                    <th className="py-3 px-3 text-center w-28">Invoiced</th>
                     <th className="py-3 px-3 text-center w-28">Status</th>
                     <th className="py-3 px-4 w-44">Job Card Ref</th>
                     <th className="py-3 px-3 w-28">Date</th>
                     <th className="py-3 px-4">Client & Project</th>
-                    <th className="py-3 px-4 w-52">Delivery Timeline</th>
+                    {jobCardsSubTab === 'running' && (
+                      <th className="py-3 px-4 w-52">Delivery Timeline</th>
+                    )}
+                    {jobCardsSubTab === 'running' && (
+                      <th className="py-3 px-4 min-w-[220px] max-w-[280px]">Factory Comments</th>
+                    )}
                     <th className="py-3 px-4 w-40">Salesman Assigned</th>
                     <th className="py-3 px-3 text-center w-24">Total Qty</th>
                     <th className="py-3 px-3 text-center w-28">Glass Area</th>
+                    <th className="py-3 px-4 text-right w-36">Total Amount</th>
+                    <th className="py-3 px-3 text-center w-20">Excel</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredQuotations.map((q) => {
-                    const { grandTotalQty, grandTotalSqm } = calculateQuotationTotals(q);
+                    const { grandTotalQty, grandTotalSqm, totalAmountAED } = calculateQuotationTotals(q);
                     const ref = q.from?.refNo || 'Pending Ref';
                     const isCopied = copiedRef === ref;
                     const displayQty = typeof q.confirmedQty === 'number' ? q.confirmedQty : grandTotalQty;
                     const delivery = getDeliveryProgress(q);
+                    const amt = typeof q.confirmedTotalAmount === 'number' && q.confirmedTotalAmount > 0
+                      ? q.confirmedTotalAmount
+                      : totalAmountAED;
 
                     let rowClassName = 'transition-colors cursor-pointer group text-slate-800 ';
-                    if (q.isCompleted) {
-                      // Clicking completed will grey out the job card
-                      rowClassName += 'bg-slate-200/90 hover:bg-slate-300/80 border-l-4 border-l-slate-500 text-slate-600 opacity-75 grayscale-[30%]';
-                    } else if (q.isInvoiced) {
-                      // Clicking invoiced will turn whole job card in little more darker green tone
-                      rowClassName += 'bg-emerald-200/90 hover:bg-emerald-300/80 border-l-4 border-l-emerald-800 text-emerald-950 font-medium';
+                    if (q.isInvoiced) {
+                      rowClassName += 'bg-emerald-50/50 hover:bg-emerald-100/60 border-l-4 border-l-emerald-700';
                     } else {
-                      // Default confirmed job card
-                      rowClassName += 'bg-emerald-50/40 hover:bg-emerald-100/60 border-l-4 border-l-emerald-600';
+                      rowClassName += 'bg-white hover:bg-blue-50/40 border-l-4 border-l-blue-600';
                     }
 
                     return (
@@ -1166,46 +1690,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         onClick={() => onOpenQuotation(q, 'job_card')}
                         className={rowClassName}
                       >
-                        {/* Stage Checklist: Checkboxes in front of each job card (Completed & Invoiced) */}
-                        <td className="py-3 px-3 align-top text-left" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex flex-col gap-1.5 p-1.5 bg-white/85 rounded-lg border border-slate-200 shadow-2xs">
-                            <label
-                              className="inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none group/chk"
-                              title="Mark as completed (greys out job card)"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={Boolean(q.isCompleted)}
-                                onChange={() => handleToggleJobFlag(q.id, 'isCompleted')}
-                                className="w-4 h-4 rounded border-slate-300 text-slate-700 focus:ring-slate-500 cursor-pointer accent-slate-700"
-                              />
-                              <span
-                                className={`text-[11px] transition-colors ${
-                                  q.isCompleted ? 'text-slate-900 font-bold line-through' : 'text-slate-600 group-hover/chk:text-slate-900'
-                                }`}
-                              >
-                                Completed
-                              </span>
-                            </label>
-                            <label
-                              className="inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none group/chk"
-                              title="Mark as invoiced (turns job card darker green tone)"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={Boolean(q.isInvoiced)}
-                                onChange={() => handleToggleJobFlag(q.id, 'isInvoiced')}
-                                className="w-4 h-4 rounded border-emerald-400 text-emerald-700 focus:ring-emerald-600 cursor-pointer accent-emerald-700"
-                              />
-                              <span
-                                className={`text-[11px] transition-colors ${
-                                  q.isInvoiced ? 'text-emerald-950 font-black' : 'text-slate-600 group-hover/chk:text-emerald-950'
-                                }`}
-                              >
-                                Invoiced
-                              </span>
-                            </label>
-                          </div>
+                        {/* Invoiced Checkbox: Check to move to Completed, Uncheck to move to Running */}
+                        <td className="py-3 px-3 align-top text-center" onClick={(e) => e.stopPropagation()}>
+                          <label
+                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold cursor-pointer select-none transition-all shadow-2xs ${
+                              q.isInvoiced
+                                ? 'bg-emerald-700 text-white border-emerald-800 hover:bg-emerald-800'
+                                : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50 hover:border-emerald-400 hover:text-emerald-900'
+                            }`}
+                            title={
+                              q.isInvoiced
+                                ? 'Invoiced. Click to uncheck and move back to Running Jobs'
+                                : 'Click to mark as Invoiced (moves to Completed Jobs tab)'
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(q.isInvoiced)}
+                              onChange={() => handleToggleInvoiced(q.id)}
+                              className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                            />
+                            <span>Invoiced</span>
+                          </label>
                         </td>
 
                         {/* Status badge / Click to edit */}
@@ -1276,56 +1782,68 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </div>
                         </td>
 
-                        {/* Delivery Timeline: between Client & Project and Salesman Assigned */}
-                        <td className="py-3 px-4 align-top" onClick={(e) => e.stopPropagation()}>
-                          <div className="space-y-1.5 min-w-[170px]">
-                            <div className="flex items-center justify-between text-xs gap-1">
-                              <div className="flex items-center gap-1 font-bold text-slate-900 text-[11px]">
-                                <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                                <span>{delivery.formattedDate}</span>
+                        {/* Delivery Timeline: ONLY in Running Jobs! */}
+                        {jobCardsSubTab === 'running' && (
+                          <td className="py-3 px-4 align-top" onClick={(e) => e.stopPropagation()}>
+                            <div className="space-y-1.5 min-w-[170px]">
+                              <div className="flex items-center justify-between text-xs gap-1">
+                                <div className="flex items-center gap-1 font-bold text-slate-900 text-[11px]">
+                                  <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  <span>{delivery.formattedDate}</span>
+                                </div>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono font-bold ${delivery.badgeColorClass}`}>
+                                  {delivery.statusText}
+                                </span>
                               </div>
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono font-bold ${delivery.badgeColorClass}`}>
-                                {delivery.statusText}
-                              </span>
-                            </div>
 
-                            {/* Bar filling everyday, turns red as final day arrives */}
-                            <div className="w-full bg-slate-200/90 rounded-full h-2 overflow-hidden shadow-inner">
-                              <div
-                                className={`h-full rounded-full transition-all duration-500 ${delivery.barColorClass}`}
-                                style={{ width: `${delivery.percent}%` }}
-                                title={`Delivery timeline: ${delivery.percent}% completed`}
-                              />
-                            </div>
-
-                            <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono">
-                              <span>
-                                {delivery.isFinalDay ? (
-                                  <span className="text-red-700 font-bold flex items-center gap-0.5">
-                                    <Clock className="w-3 h-3 text-red-600 shrink-0 animate-pulse" />
-                                    Final Day
-                                  </span>
-                                ) : (
-                                  <span>Day {Math.min(delivery.elapsedDays + 1, delivery.totalDays)} of {delivery.totalDays}</span>
-                                )}
-                              </span>
-                              <span className="font-semibold">{delivery.percent}%</span>
-                            </div>
-
-                            {/* Quick edit delivery date link */}
-                            {!isProduction && (
-                              <div className="pt-0.5 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenConfirmationModal(q)}
-                                  className="text-[10px] text-emerald-800 hover:text-emerald-950 underline font-medium cursor-pointer"
-                                >
-                                  Edit Date
-                                </button>
+                              {/* Bar filling everyday, turns red as final day arrives */}
+                              <div className="w-full bg-slate-200/90 rounded-full h-2 overflow-hidden shadow-inner">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-500 ${delivery.barColorClass}`}
+                                  style={{ width: `${delivery.percent}%` }}
+                                  title={`Delivery timeline: ${delivery.percent}% completed`}
+                                />
                               </div>
-                            )}
-                          </div>
-                        </td>
+
+                              <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono">
+                                <span>
+                                  {delivery.isFinalDay ? (
+                                    <span className="text-red-700 font-bold flex items-center gap-0.5">
+                                      <Clock className="w-3 h-3 text-red-600 shrink-0 animate-pulse" />
+                                      Final Day
+                                    </span>
+                                  ) : (
+                                    <span>Day {Math.min(delivery.elapsedDays + 1, delivery.totalDays)} of {delivery.totalDays}</span>
+                                  )}
+                                </span>
+                                <span className="font-semibold">{delivery.percent}%</span>
+                              </div>
+
+                              {/* Quick edit delivery date link */}
+                              {!isProduction && (
+                                <div className="pt-0.5 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenConfirmationModal(q)}
+                                    className="text-[10px] text-emerald-800 hover:text-emerald-950 underline font-medium cursor-pointer"
+                                  >
+                                    Edit Date
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        )}
+
+                        {/* Factory Comments: ONLY in Running Jobs! */}
+                        {jobCardsSubTab === 'running' && (
+                          <td className="py-3 px-4 align-top" onClick={(e) => e.stopPropagation()}>
+                            <FactoryCommentsCell
+                              quotation={q}
+                              onSaveComment={handleSaveComment}
+                            />
+                          </td>
+                        )}
 
                         {/* Salesman Assigned */}
                         <td className="py-3 px-4 align-top">
@@ -1355,6 +1873,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             {q.glassSections?.length || 0} Types
                           </div>
                         </td>
+
+                        {/* Total Amount (AED) */}
+                        <td className="py-3 px-4 align-top text-right">
+                          <div className="font-mono font-bold text-sm text-slate-900">
+                            AED {amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-sans">Excl. VAT</div>
+                        </td>
+
+                        {/* 1-Click Excel Optimizer Export */}
+                        <td className="py-3 px-3 align-top text-center" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              try {
+                                exportJobCardToExcel(q);
+                                if (onNotification) onNotification(`Exported Excel for Job Card ${ref}`, 'success');
+                              } catch (err: any) {
+                                if (onNotification) onNotification(err?.message || 'Export failed', 'error');
+                              }
+                            }}
+                            className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 transition-colors inline-flex items-center justify-center cursor-pointer shadow-2xs"
+                            title="Export cutting sizes to Excel (.xlsx) for external sheet optimizer"
+                          >
+                            <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1363,12 +1908,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             {/* Footer Summary in Job Cards Table */}
-            <div className="px-4 py-3 bg-emerald-50/50 border-t border-emerald-100 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 gap-2">
+            <div className="px-4 py-3 bg-slate-50/90 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 gap-2">
               <div>
-                Showing <span className="font-bold text-emerald-900">{filteredQuotations.length}</span> confirmed factory Job Cards
+                Showing <span className="font-bold text-slate-900">{filteredQuotations.length}</span>{' '}
+                <span className="font-semibold text-slate-800">{jobCardsSubTab === 'running' ? 'Running' : 'Completed'}</span> Job Card{filteredQuotations.length === 1 ? '' : 's'}
               </div>
               <div className="text-slate-500 text-[11px]">
-                To modify or unlock any Job Card, click its <strong>Confirmed</strong> badge or <strong>Specs</strong> button.
+                {jobCardsSubTab === 'running'
+                  ? 'Click the "Invoiced" checkbox on any job card to move it to the Completed tab.'
+                  : 'Uncheck the "Invoiced" checkbox on any job card to move it back to the Running tab.'}
               </div>
             </div>
           </div>
@@ -1949,6 +2497,146 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               >
                 <Ban className="w-3.5 h-3.5" />
                 <span>Confirm & Cancel Quote</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Overdue Delivery Timeline Warning Modal (Triggers every 3 hours for running jobs beyond timeline) */}
+      {showOverdueModal && overdueRunningJobs.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full border-2 border-red-400 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="bg-linear-to-r from-red-700 via-red-800 to-rose-900 text-white p-5 flex items-start justify-between gap-4 shrink-0">
+              <div className="flex items-start gap-3.5">
+                <div className="p-2.5 bg-white/15 rounded-xl border border-white/20 text-white shrink-0 mt-0.5 shadow-inner">
+                  <AlertTriangle className="w-6 h-6 text-red-200 animate-bounce" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] uppercase tracking-wider font-extrabold bg-red-950/70 text-red-200 px-2 py-0.5 rounded border border-red-500/40">
+                      3-Hour Interval Alert
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wider font-bold bg-white/20 text-white px-2 py-0.5 rounded">
+                      Manual Closure Required
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-black text-white mt-1 leading-tight">
+                    Delivery Timeline Warning • {overdueRunningJobs.length} Running Order{overdueRunningJobs.length > 1 ? 's' : ''} Overdue
+                  </h3>
+                  <p className="text-xs text-red-100 mt-1 leading-relaxed">
+                    The following orders in Running Jobs have exceeded their committed delivery date. Please review factory progress, coordinate dispatch, or update comments.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleDismissOverdueWarning}
+                className="text-white/70 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
+                title="Acknowledge & close warning (snoozes for 3 hours)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Orders List */}
+            <div className="p-5 overflow-y-auto divide-y divide-slate-100 space-y-4 max-h-[60vh]">
+              {overdueRunningJobs.map((job) => {
+                const delivery = getDeliveryProgress(job);
+                const { grandTotalQty, grandTotalSqm, totalAmountAED } = calculateQuotationTotals(job);
+                const ref = job.from?.refNo || 'JC-REF';
+                const daysLate = Math.abs(delivery.daysRemaining);
+
+                return (
+                  <div key={job.id} className="pt-4 first:pt-0 bg-red-50/40 rounded-xl p-4 border border-red-200/80">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-700 text-white px-1.5 py-0.5 rounded font-mono">
+                            JC
+                          </span>
+                          <span className="font-mono font-black text-sm text-slate-950 bg-white px-2 py-0.5 rounded border border-slate-300 shadow-2xs">
+                            {ref}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-red-700 bg-red-100 border border-red-300 px-2 py-0.5 rounded-full">
+                            <Clock className="w-3.5 h-3.5 text-red-600 animate-pulse" />
+                            {daysLate === 0 ? 'Overdue Today' : `${daysLate} day${daysLate > 1 ? 's' : ''} overdue`}
+                          </span>
+                        </div>
+                        <div className="text-sm font-bold text-slate-900">
+                          {job.client?.name || 'Unnamed Client'}
+                        </div>
+                        <div className="text-xs text-slate-500 font-mono">
+                          Committed Delivery: <span className="font-bold text-red-900">{delivery.formattedDate}</span>
+                          {job.salesmanName && <span> • Salesman: {job.salesmanName}</span>}
+                        </div>
+                        <div className="text-xs text-slate-600 font-mono">
+                          Total: <span className="font-bold text-slate-800">{grandTotalQty.toLocaleString()} Pcs</span> •{' '}
+                          <span className="font-bold text-slate-800">{grandTotalSqm.toFixed(2)} m²</span> •{' '}
+                          <span className="font-bold text-slate-900">AED {totalAmountAED.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0 self-end sm:self-start">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try {
+                              exportJobCardToExcel(job);
+                              if (onNotification) onNotification(`Exported Excel for Job Card ${ref}`, 'success');
+                            } catch (err: any) {
+                              if (onNotification) onNotification(err?.message || 'Export failed', 'error');
+                            }
+                          }}
+                          className="px-2.5 py-1.5 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold transition shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                          title="Export cutting sizes to Excel for optimizer"
+                        >
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>Excel</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowOverdueModal(false);
+                            onOpenQuotation(job, 'job_card');
+                          }}
+                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Open Job Card</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Factory Comments Inline Input in Modal */}
+                    <div className="mt-3 pt-3 border-t border-red-200/60">
+                      <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <MessageSquare className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Factory Comments & Notes:</span>
+                      </div>
+                      <FactoryCommentsCell
+                        quotation={job}
+                        onSaveComment={handleSaveComment}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer with Manual Close / Snooze Button */}
+            <div className="bg-slate-50 p-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+              <div className="text-xs text-slate-500 text-center sm:text-left">
+                Closing this dialog acknowledges the warning and sets the reminder for <strong>3 hours</strong> from now.
+              </div>
+              <button
+                type="button"
+                onClick={handleDismissOverdueWarning}
+                className="w-full sm:w-auto px-6 py-2.5 bg-slate-900 hover:bg-black text-white text-xs font-extrabold rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span>Acknowledge & Close Warning (Snooze 3 Hours)</span>
               </button>
             </div>
           </div>

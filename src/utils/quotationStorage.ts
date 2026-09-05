@@ -211,11 +211,16 @@ export function confirmQuotation(id: string, details: ConfirmationDetails): Quot
 }
 
 /**
- * Updates Job Card flags such as isCompleted, isInvoiced, or committedDeliveryDate.
+ * Updates Job Card flags such as isCompleted, isInvoiced, committedDeliveryDate, or factoryComments.
  */
 export function updateJobCardFlags(
   id: string,
-  updates: { isCompleted?: boolean; isInvoiced?: boolean; committedDeliveryDate?: string }
+  updates: {
+    isCompleted?: boolean;
+    isInvoiced?: boolean;
+    committedDeliveryDate?: string;
+    factoryComments?: string;
+  }
 ): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
@@ -237,6 +242,13 @@ export function updateJobCardFlags(
   }
 
   return updatedList;
+}
+
+/**
+ * Updates factory comments for a specific job card order.
+ */
+export function updateJobCardComments(id: string, factoryComments: string): Quotation[] {
+  return updateJobCardFlags(id, { factoryComments });
 }
 
 /**

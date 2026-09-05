@@ -42,6 +42,7 @@ import { getCurrentUser, logoutUser } from './utils/userStorage';
 import { calculateQuotationTotals } from './utils/calculations';
 import { convertNumberToWords } from './utils/numberToWords';
 import { exportToPdf } from './utils/pdfGenerator';
+import { exportJobCardToExcel, copySizesToClipboard } from './utils/optimizerExport';
 import { TopNavbar } from './components/TopNavbar';
 import { DashboardView } from './components/DashboardView';
 import { LoginScreen } from './components/LoginScreen';
@@ -197,10 +198,15 @@ export default function App() {
     showNotification(`Unlocked quotation ${ref} for editing`, 'info');
   };
 
-  // DASHBOARD ACTION: Update Job Card Flags (completed, invoiced, committedDeliveryDate)
+  // DASHBOARD ACTION: Update Job Card Flags (completed, invoiced, committedDeliveryDate, factoryComments)
   const handleUpdateJobCardFlags = (
     id: string,
-    updates: { isCompleted?: boolean; isInvoiced?: boolean; committedDeliveryDate?: string }
+    updates: {
+      isCompleted?: boolean;
+      isInvoiced?: boolean;
+      committedDeliveryDate?: string;
+      factoryComments?: string;
+    }
   ) => {
     const updated = updateJobCardFlags(id, updates);
     setQuotations(updated);
@@ -492,13 +498,31 @@ export default function App() {
                       <ClipboardList className="w-4 h-4 text-emerald-700 shrink-0" />
                       <span>Authorized Factory Production Job Card • Document View</span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setViewMode('dashboard')}
-                      className="px-3 py-1 bg-white hover:bg-emerald-100 border border-emerald-300 rounded-lg text-emerald-900 cursor-pointer font-bold transition-colors"
-                    >
-                      ← Back to Job Cards List
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          try {
+                            exportJobCardToExcel(quotation);
+                            showNotification('Exported Job Card Excel for Sheet Optimizer', 'success');
+                          } catch (e: any) {
+                            showNotification(e?.message || 'Export failed', 'error');
+                          }
+                        }}
+                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer font-bold transition-colors flex items-center gap-1.5 shadow-xs"
+                        title="Download formatted cutting sizes for external optimizer"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                        <span>Export Excel (Optimizer)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setViewMode('dashboard')}
+                        className="px-3 py-1 bg-white hover:bg-emerald-100 border border-emerald-300 rounded-lg text-emerald-900 cursor-pointer font-bold transition-colors"
+                      >
+                        ← Back to Job Cards List
+                      </button>
+                    </div>
                   </div>
                   <JobCardDocument quotation={quotation} />
                 </div>
@@ -862,6 +886,22 @@ export default function App() {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          exportJobCardToExcel(quotation);
+                          showNotification('Exported Job Card Excel for Sheet Optimizer', 'success');
+                        } catch (e: any) {
+                          showNotification(e?.message || 'Export failed', 'error');
+                        }
+                      }}
+                      className="px-3.5 py-1.5 text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-md flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                      title="Export cutting sizes to Excel (.xlsx) for external sheet optimizer"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                      <span>Export to Excel</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => setActiveTab('edit')}
