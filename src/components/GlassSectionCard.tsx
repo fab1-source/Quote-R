@@ -6,12 +6,14 @@ import {
   ChevronDown,
   ChevronUp,
   Settings2,
-  Sparkles
+  Sparkles,
+  Layers
 } from 'lucide-react';
 import { GlassSection, GlassItem } from '../types';
 import { calculatePerSqm, calculateTotalSqm, calculateSectionTotals } from '../utils/calculations';
 import { PasteExcelModal } from './PasteExcelModal';
 import { parseExcelData } from '../utils/excelParser';
+import { GlassDescriptionBuilder } from './GlassDescriptionBuilder';
 
 interface GlassSectionCardProps {
   section: GlassSection;
@@ -63,6 +65,7 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
+  const [showBuilder, setShowBuilder] = useState(true);
 
   const { totalQty, totalSqm, effectiveAmount } = calculateSectionTotals(section);
 
@@ -222,6 +225,24 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
               </div>
             )}
           </div>
+
+          {/* Toggle Glass Options Builder button */}
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => setShowBuilder(!showBuilder)}
+              className={`px-2.5 py-1.5 text-xs font-semibold rounded-md border flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
+                showBuilder
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                  : 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50'
+              }`}
+              title="Toggle Glass Description Builder"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{showBuilder ? 'Hide Options' : 'Click Options Builder'}</span>
+              {showBuilder ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+          )}
         </div>
 
         {/* Section Action Buttons */}
@@ -297,6 +318,30 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
           )}
         </div>
       </div>
+
+      {/* Glass Description Options Builder */}
+      {showBuilder && !readOnly && (
+        <div className="px-5 py-3.5 bg-slate-50/50 border-b border-slate-200">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+              Glass Description Builder (Single, DGU, Triple, Laminated, Mirror)
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowBuilder(false)}
+              className="text-[11px] text-slate-400 hover:text-slate-600 font-medium cursor-pointer"
+            >
+              Hide Builder
+            </button>
+          </div>
+          <GlassDescriptionBuilder
+            currentDescription={section.description}
+            onApplyDescription={(desc) => onUpdateSection({ ...section, description: desc })}
+            readOnly={readOnly}
+          />
+        </div>
+      )}
 
       {/* Summary Chips Bar */}
       <div className="px-5 py-3 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
