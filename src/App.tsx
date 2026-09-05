@@ -31,6 +31,7 @@ import {
   cancelQuotation,
   confirmQuotation,
   unconfirmQuotation,
+  updateJobCardFlags,
   ConfirmationDetails,
   createNewQuotationWithNextRef,
   duplicateQuotation,
@@ -194,6 +195,21 @@ export default function App() {
       }
     }
     showNotification(`Unlocked quotation ${ref} for editing`, 'info');
+  };
+
+  // DASHBOARD ACTION: Update Job Card Flags (completed, invoiced, committedDeliveryDate)
+  const handleUpdateJobCardFlags = (
+    id: string,
+    updates: { isCompleted?: boolean; isInvoiced?: boolean; committedDeliveryDate?: string }
+  ) => {
+    const updated = updateJobCardFlags(id, updates);
+    setQuotations(updated);
+    if (quotation.id === id) {
+      const updatedQuote = updated.find((q) => q.id === id);
+      if (updatedQuote) {
+        setQuotation(updatedQuote);
+      }
+    }
   };
 
   // Load sample quotation template
@@ -425,6 +441,7 @@ export default function App() {
           currentUser={currentUser}
           onLogout={handleLogout}
           onNotification={showNotification}
+          onUpdateJobCardFlags={handleUpdateJobCardFlags}
         />
       ) : (() => {
         const isLocked = quotation.status === 'cancelled' || quotation.status === 'confirmed';

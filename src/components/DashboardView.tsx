@@ -27,12 +27,13 @@ import {
   Calculator,
   LogOut,
   Users as UsersIcon,
-  Shield
+  Shield,
+  Clock
 } from 'lucide-react';
 import { Quotation, UserAccount } from '../types';
 import { InterglassEmblem } from './InterglassLogo';
 import { calculateQuotationTotals } from '../utils/calculations';
-import { generateNextQuoteNumber, ConfirmationDetails } from '../utils/quotationStorage';
+import { generateNextQuoteNumber, ConfirmationDetails, getDefaultDeliveryDate, updateJobCardFlags } from '../utils/quotationStorage';
 import { UsersManagementView } from './UsersManagementView';
 
 interface DashboardViewProps {
@@ -53,6 +54,7 @@ interface DashboardViewProps {
   currentUser: UserAccount;
   onLogout: () => void;
   onNotification?: (msg: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
+  onUpdateJobCardFlags?: (id: string, updates: { isCompleted?: boolean; isInvoiced?: boolean; committedDeliveryDate?: string }) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -69,6 +71,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   currentUser,
   onLogout,
   onNotification,
+  onUpdateJobCardFlags,
 }) => {
   const isProduction = currentUser.role === 'PRODUCTION';
   const isAdmin = currentUser.role === 'ADMIN';
@@ -102,13 +105,177 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Confirmation Modal State (Read-only as per last saved quotation)
   const [quoteToConfirm, setQuoteToConfirm] = useState<Quotation | null>(null);
+  const [committedDateInput, setCommittedDateInput] = useState<string>(() => getDefaultDeliveryDate(4));
 
   // Handle open confirmation modal
   const handleOpenConfirmationModal = (quote: Quotation) => {
     setQuoteToConfirm(quote);
+    setCommittedDateInput(quote.committedDeliveryDate || getDefaultDeliveryDate(4));
   };
 
-  // Submit Confirmation (Moves confirmed quotation to Job Cards with exact saved quotation values)
+  // Adjust committed delivery date by delta days (e.g. -1, +1)
+  const adjustCommittedDate = (deltaDays: number) => {
+    const base = committedDateInput ? new Date(committedDateInput + 'T00:00:00') : new Date();
+    base.setDate(base.getDate() + deltaDays);
+    const yyyy = base.getFullYear();
+    const mm = String(base.getMonth() + 1).padStart(2, '0');
+    const dd = String(base.getDate()).padStart(2, '0');
+    setCommittedDateInput(`${yyyy}-${mm}-${dd}`);
+  };
+
+  // Human-readable description of committed delivery date relative to today
+  const getDaysFromTodayDesc = (dateStr: string) => {
+    if (!dateStr) return 'No delivery date selected';
+    const target = new Date(dateStr + 'T00:00:00');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    const dayName = target.toLocaleDateString('en-GB', {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    if (diffDays === 0) return `Due Today • Final Day (${dayName})`;
+    if (diffDays === 1) return `1 day from today • Final day arriving (${dayName})`;
+    if (diffDays > 1) return `${diffDays} days from today (${dayName})`;
+    return `${Math.abs(diffDays)} day(s) overdue (${dayName})`;
+  };
+
+  // Save updated delivery date for an already confirmed quotation
+  const handleUpdateCommittedDateOnly = () => {
+    if (!quoteToConfirm) return;
+    const newDate = committedDateInput || getDefaultDeliveryDate(4);
+    if (onUpdateJobCardFlags) {
+      onUpdateJobCardFlags(quoteToConfirm.id, { committedDeliveryDate: newDate });
+    } else {
+      updateJobCardFlags(quoteToConfirm.id, { committedDeliveryDate: newDate });
+    }
+    if (onNotification) {
+      onNotification(`Committed delivery date updated to ${newDate}`, 'success');
+    }
+    setQuoteToConfirm(null);
+  };
+
+  // Toggle Job Card flags: isCompleted (greys out) & isInvoiced (darker green tone)
+  const handleToggleJobFlag = (id: string, flag: 'isCompleted' | 'isInvoiced') => {
+    const target = quotations.find((q) => q.id === id);
+    if (!target) return;
+    const currentVal = Boolean(target[flag]);
+    const newVal = !currentVal;
+    if (onUpdateJobCardFlags) {
+      onUpdateJobCardFlags(id, { [flag]: newVal });
+    } else {
+      updateJobCardFlags(id, { [flag]: newVal });
+    }
+    if (onNotification) {
+      if (flag === 'isCompleted') {
+        onNotification(
+          newVal
+            ? `Job Card ${target.from?.refNo || ''} marked as Completed (greyed out)`
+            : `Job Card ${target.from?.refNo || ''} marked as In Progress`,
+          'info'
+        );
+      } else {
+        onNotification(
+          newVal
+            ? `Job Card ${target.from?.refNo || ''} marked as Invoiced (darker green)`
+            : `Job Card ${target.from?.refNo || ''} marked as Uninvoiced`,
+          'success'
+        );
+      }
+    }
+  };
+
+  // Calculates daily filling progress bar and status for job cards
+  const getDeliveryProgress = (q: Quotation) => {
+    const deliveryDateStr = q.committedDeliveryDate || getDefaultDeliveryDate(4);
+    const targetDate = new Date(deliveryDateStr + 'T00:00:00');
+
+    let startDate: Date;
+    if (q.confirmedAt) {
+      startDate = new Date(q.confirmedAt);
+    } else if (q.createdAt) {
+      startDate = new Date(q.createdAt);
+    } else {
+      startDate = new Date();
+    }
+    startDate.setHours(0, 0, 0, 0);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Total duration in days (minimum 1)
+    const totalDays = Math.max(1, Math.round((targetDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+    // Days elapsed since confirmation (from 0 to totalDays)
+    const elapsedDays = Math.max(0, Math.round((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+    // Days remaining until delivery
+    const daysRemaining = Math.round((targetDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    // Daily fill percentage (clamped between 0 and 100)
+    let percent = Math.min(100, Math.max(0, Math.round((elapsedDays / totalDays) * 100)));
+    if (percent === 0 && daysRemaining >= 0) {
+      percent = Math.min(100, Math.max(12, Math.round(100 / totalDays)));
+    }
+    if (daysRemaining <= 0) {
+      percent = 100;
+    }
+
+    // Turns red as the final day is arriving (daysRemaining <= 1 or overdue)
+    const isFinalDay = daysRemaining === 1;
+    const isDueToday = daysRemaining === 0;
+    const isOverdue = daysRemaining < 0;
+    const isWarning = daysRemaining === 2;
+
+    let barColorClass = 'bg-emerald-500';
+    let badgeColorClass = 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    let statusText = `${daysRemaining}d left`;
+
+    if (isOverdue) {
+      barColorClass = 'bg-red-600';
+      badgeColorClass = 'bg-red-100 text-red-900 border-red-300 font-bold';
+      statusText = `${Math.abs(daysRemaining)}d Overdue!`;
+    } else if (isDueToday) {
+      barColorClass = 'bg-red-600 animate-pulse';
+      badgeColorClass = 'bg-red-100 text-red-900 border-red-300 font-bold';
+      statusText = 'Due Today! (Final Day)';
+    } else if (isFinalDay) {
+      barColorClass = 'bg-red-500 animate-pulse';
+      badgeColorClass = 'bg-red-50 text-red-800 border-red-200 font-bold';
+      statusText = '1 Day Left (Final Day)';
+    } else if (isWarning) {
+      barColorClass = 'bg-amber-500';
+      badgeColorClass = 'bg-amber-50 text-amber-900 border-amber-200';
+      statusText = '2 days left';
+    } else {
+      statusText = `${daysRemaining} days left`;
+    }
+
+    const formattedDate = targetDate.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    return {
+      deliveryDateStr,
+      formattedDate,
+      totalDays,
+      elapsedDays,
+      daysRemaining,
+      percent,
+      barColorClass,
+      badgeColorClass,
+      statusText,
+      isFinalDay: isFinalDay || isDueToday || isOverdue,
+      isWarning,
+    };
+  };
+
+  // Submit Confirmation (Moves confirmed quotation to Job Cards with exact saved quotation values and committed delivery date)
   const handleConfirmOrderSubmit = () => {
     if (!quoteToConfirm) return;
     const { grandTotalQty, totalAmountAED } = calculateQuotationTotals(quoteToConfirm);
@@ -118,6 +285,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       salesmanName: (quoteToConfirm.salesmanName || quoteToConfirm.from?.attention || '').trim(),
       qty: grandTotalQty,
       totalAmount: totalAmountAED,
+      committedDeliveryDate: committedDateInput || getDefaultDeliveryDate(4),
     });
 
     setQuoteToConfirm(null);
@@ -274,17 +442,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Calculate Overall Dashboard Metrics
   const metrics = useMemo(() => {
-    let totalValue = 0;
-    let totalSqm = 0;
-    let totalItems = 0;
+    let pendingPipelineValue = 0; // Excl. VAT, pending orders only (not confirmed, not cancelled)
+    let confirmedJobsValue = 0;   // Excl. VAT, confirmed orders only
     let confirmedCount = 0;
+    let pendingCount = 0;
+    let cancelledCount = 0;
 
     quotations.forEach((q) => {
-      const { totalWithVatAED, grandTotalSqm, grandTotalQty } = calculateQuotationTotals(q);
-      totalValue += totalWithVatAED;
-      totalSqm += grandTotalSqm;
-      totalItems += grandTotalQty;
-      if (q.status === 'confirmed') confirmedCount++;
+      const { totalAmountAED } = calculateQuotationTotals(q);
+
+      if (q.status === 'confirmed') {
+        confirmedCount++;
+        const confirmedAmt = typeof q.confirmedTotalAmount === 'number' && q.confirmedTotalAmount > 0
+          ? q.confirmedTotalAmount
+          : totalAmountAED;
+        confirmedJobsValue += confirmedAmt;
+      } else if (q.status === 'cancelled') {
+        cancelledCount++;
+      } else {
+        pendingCount++;
+        pendingPipelineValue += totalAmountAED;
+      }
     });
 
     // Current month count (e.g. 26/09)
@@ -295,9 +473,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return {
       count: quotations.length,
       confirmedCount,
-      totalValue,
-      totalSqm,
-      totalItems,
+      pendingCount,
+      cancelledCount,
+      pendingPipelineValue,
+      confirmedJobsValue,
       thisMonthCount,
       currentYyMm,
     };
@@ -520,7 +699,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           ) : (
             /* Commercial & Estimation Metrics */
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-6 sm:mt-8">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mt-6 sm:mt-8">
               <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Quotations</span>
@@ -530,9 +709,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <span className="text-2xl font-bold text-slate-900">{metrics.count}</span>
                   <span className="text-xs text-slate-500 font-medium">records</span>
                 </div>
-                <div className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1 font-medium">
-                  <span>Next Quote:</span>
+                <div className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1 font-medium truncate">
+                  <span>Next:</span>
                   <span className="font-mono font-bold text-[#7B1818]">{nextQuoteNumber}</span>
+                </div>
+              </div>
+
+              {/* Confirmed Orders (e.g. 1/3) */}
+              <div className="bg-emerald-50/60 border border-emerald-200/90 rounded-xl p-4 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Confirmed Orders</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-emerald-950 font-mono">
+                    {metrics.confirmedCount}/{metrics.count}
+                  </span>
+                  <span className="text-xs text-emerald-700 font-medium">orders</span>
+                </div>
+                <div className="text-[11px] text-emerald-700 mt-1 font-medium truncate">
+                  {metrics.confirmedCount} confirmed of {metrics.count} total
                 </div>
               </div>
 
@@ -543,27 +739,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div className="mt-2 flex items-baseline gap-1.5">
                   <span className="text-2xl font-bold text-slate-900 font-mono">
-                    {metrics.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {metrics.pendingPipelineValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="text-[11px] text-slate-500 mt-1">
-                  Incl. 5% UAE VAT
+                <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
+                  <span className="font-semibold text-slate-700">Excl. VAT</span>
+                  <span>• Pending orders only</span>
                 </div>
               </div>
 
-              <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
+              {/* Confirmed Jobs Value (Excl. VAT) */}
+              <div className="bg-emerald-50/60 border border-emerald-200/90 rounded-xl p-4 shadow-2xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Glass Area</span>
-                  <Layers className="w-4 h-4 text-slate-400" />
+                  <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Confirmed Jobs Value</span>
+                  <FileCheck className="w-4 h-4 text-emerald-600" />
                 </div>
                 <div className="mt-2 flex items-baseline gap-1.5">
-                  <span className="text-2xl font-bold text-slate-900 font-mono">
-                    {metrics.totalSqm.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="text-2xl font-bold text-emerald-950 font-mono">
+                    {metrics.confirmedJobsValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
-                  <span className="text-xs text-slate-500 font-medium">m²</span>
                 </div>
-                <div className="text-[11px] text-slate-500 mt-1 font-mono">
-                  {metrics.totalItems} pieces ordered
+                <div className="text-[11px] text-emerald-700 mt-1 flex items-center gap-1 font-medium">
+                  <span className="font-semibold text-emerald-900">Excl. VAT</span>
+                  <span>• In Production</span>
                 </div>
               </div>
 
@@ -931,10 +1129,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
                   <tr className="bg-slate-50/90 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-600 font-bold">
+                    <th className="py-3 px-3 text-left w-36">Stage Checklist</th>
                     <th className="py-3 px-3 text-center w-28">Status</th>
                     <th className="py-3 px-4 w-44">Job Card Ref</th>
                     <th className="py-3 px-3 w-28">Date</th>
                     <th className="py-3 px-4">Client & Project</th>
+                    <th className="py-3 px-4 w-52">Delivery Timeline</th>
                     <th className="py-3 px-4 w-40">Salesman Assigned</th>
                     <th className="py-3 px-3 text-center w-24">Total Qty</th>
                     <th className="py-3 px-3 text-center w-28">Glass Area</th>
@@ -947,13 +1147,68 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     const ref = q.from?.refNo || 'Pending Ref';
                     const isCopied = copiedRef === ref;
                     const displayQty = typeof q.confirmedQty === 'number' ? q.confirmedQty : grandTotalQty;
+                    const delivery = getDeliveryProgress(q);
+
+                    let rowClassName = 'transition-colors cursor-pointer group text-slate-800 ';
+                    if (q.isCompleted) {
+                      // Clicking completed will grey out the job card
+                      rowClassName += 'bg-slate-200/90 hover:bg-slate-300/80 border-l-4 border-l-slate-500 text-slate-600 opacity-75 grayscale-[30%]';
+                    } else if (q.isInvoiced) {
+                      // Clicking invoiced will turn whole job card in little more darker green tone
+                      rowClassName += 'bg-emerald-200/90 hover:bg-emerald-300/80 border-l-4 border-l-emerald-800 text-emerald-950 font-medium';
+                    } else {
+                      // Default confirmed job card
+                      rowClassName += 'bg-emerald-50/40 hover:bg-emerald-100/60 border-l-4 border-l-emerald-600';
+                    }
 
                     return (
                       <tr
                         key={q.id}
                         onClick={() => onOpenQuotation(q, 'job_card')}
-                        className="transition-colors cursor-pointer group bg-emerald-50/40 hover:bg-emerald-100/60 border-l-4 border-l-emerald-600 text-slate-800"
+                        className={rowClassName}
                       >
+                        {/* Stage Checklist: Checkboxes in front of each job card (Completed & Invoiced) */}
+                        <td className="py-3 px-3 align-top text-left" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex flex-col gap-1.5 p-1.5 bg-white/85 rounded-lg border border-slate-200 shadow-2xs">
+                            <label
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none group/chk"
+                              title="Mark as completed (greys out job card)"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={Boolean(q.isCompleted)}
+                                onChange={() => handleToggleJobFlag(q.id, 'isCompleted')}
+                                className="w-4 h-4 rounded border-slate-300 text-slate-700 focus:ring-slate-500 cursor-pointer accent-slate-700"
+                              />
+                              <span
+                                className={`text-[11px] transition-colors ${
+                                  q.isCompleted ? 'text-slate-900 font-bold line-through' : 'text-slate-600 group-hover/chk:text-slate-900'
+                                }`}
+                              >
+                                Completed
+                              </span>
+                            </label>
+                            <label
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none group/chk"
+                              title="Mark as invoiced (turns job card darker green tone)"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={Boolean(q.isInvoiced)}
+                                onChange={() => handleToggleJobFlag(q.id, 'isInvoiced')}
+                                className="w-4 h-4 rounded border-emerald-400 text-emerald-700 focus:ring-emerald-600 cursor-pointer accent-emerald-700"
+                              />
+                              <span
+                                className={`text-[11px] transition-colors ${
+                                  q.isInvoiced ? 'text-emerald-950 font-black' : 'text-slate-600 group-hover/chk:text-emerald-950'
+                                }`}
+                              >
+                                Invoiced
+                              </span>
+                            </label>
+                          </div>
+                        </td>
+
                         {/* Status badge / Click to edit */}
                         <td className="py-3 px-3 align-top text-center" onClick={(e) => e.stopPropagation()}>
                           {isProduction ? (
@@ -1018,6 +1273,57 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               <span className="text-[11px] text-slate-500">
                                 Attn: <span className="text-slate-700 font-medium">{q.client.kindAttn}</span>
                               </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Delivery Timeline: between Client & Project and Salesman Assigned */}
+                        <td className="py-3 px-4 align-top" onClick={(e) => e.stopPropagation()}>
+                          <div className="space-y-1.5 min-w-[170px]">
+                            <div className="flex items-center justify-between text-xs gap-1">
+                              <div className="flex items-center gap-1 font-bold text-slate-900 text-[11px]">
+                                <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                <span>{delivery.formattedDate}</span>
+                              </div>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono font-bold ${delivery.badgeColorClass}`}>
+                                {delivery.statusText}
+                              </span>
+                            </div>
+
+                            {/* Bar filling everyday, turns red as final day arrives */}
+                            <div className="w-full bg-slate-200/90 rounded-full h-2 overflow-hidden shadow-inner">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${delivery.barColorClass}`}
+                                style={{ width: `${delivery.percent}%` }}
+                                title={`Delivery timeline: ${delivery.percent}% completed`}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono">
+                              <span>
+                                {delivery.isFinalDay ? (
+                                  <span className="text-red-700 font-bold flex items-center gap-0.5">
+                                    <Clock className="w-3 h-3 text-red-600 shrink-0 animate-pulse" />
+                                    Final Day
+                                  </span>
+                                ) : (
+                                  <span>Day {Math.min(delivery.elapsedDays + 1, delivery.totalDays)} of {delivery.totalDays}</span>
+                                )}
+                              </span>
+                              <span className="font-semibold">{delivery.percent}%</span>
+                            </div>
+
+                            {/* Quick edit delivery date link */}
+                            {!isProduction && (
+                              <div className="pt-0.5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenConfirmationModal(q)}
+                                  className="text-[10px] text-emerald-800 hover:text-emerald-950 underline font-medium cursor-pointer"
+                                >
+                                  Edit Date
+                                </button>
+                              </div>
                             )}
                           </div>
                         </td>
@@ -1507,6 +1813,78 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <span className="text-[10px] text-slate-400 font-mono px-2 py-0.5 rounded bg-white border border-slate-200 shrink-0">
                     Locked
                   </span>
+                </div>
+
+                {/* Committed Date of Delivery Box (Editable, default 4th day from current date) */}
+                <div className="p-3.5 bg-emerald-50/60 border-2 border-emerald-500/30 rounded-xl space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className="w-4 h-4 text-emerald-800" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-950">
+                        Committed Date of Delivery
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold">
+                      Default: 4th Day
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={committedDateInput}
+                      onChange={(e) => setCommittedDateInput(e.target.value)}
+                      className="flex-1 px-3 py-2 text-sm font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded-lg shadow-2xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-600 outline-none"
+                    />
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => adjustCommittedDate(-1)}
+                        className="px-2.5 py-2 text-xs font-bold bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 shadow-2xs transition-colors cursor-pointer"
+                        title="Reduce by 1 day"
+                      >
+                        -1d
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => adjustCommittedDate(1)}
+                        className="px-2.5 py-2 text-xs font-bold bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 shadow-2xs transition-colors cursor-pointer"
+                        title="Extend by 1 day"
+                      >
+                        +1d
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCommittedDateInput(getDefaultDeliveryDate(4))}
+                        className="px-2 py-2 text-[11px] font-semibold bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-600 shadow-2xs transition-colors cursor-pointer"
+                        title="Reset to 4th day from today"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-600 bg-white/80 px-2.5 py-1.5 rounded-md border border-slate-200">
+                    <span className="font-semibold text-slate-800">
+                      {getDaysFromTodayDesc(committedDateInput)}
+                    </span>
+                    <span className="text-emerald-800 text-[10px] font-medium">
+                      Transfers to Job Card Timeline Bar
+                    </span>
+                  </div>
+
+                  {isAlreadyConfirmed && (
+                    <div className="pt-1 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleUpdateCommittedDateOnly}
+                        className="px-3 py-1.5 text-xs font-bold text-emerald-950 bg-emerald-200 hover:bg-emerald-300 border border-emerald-400 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-800" />
+                        <span>Update Delivery Date</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Quantity & Total Amount in 2 columns */}

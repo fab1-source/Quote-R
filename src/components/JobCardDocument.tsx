@@ -128,6 +128,20 @@ export const JobCardDocument: React.FC<JobCardDocumentProps> = ({ quotation }) =
                   {confirmedDateStr}
                 </td>
               </tr>
+              {quotation.committedDeliveryDate && (
+                <tr className="border-b border-black bg-emerald-50/60">
+                  <td className="font-bold px-2 py-1 text-emerald-950 border-r border-black">
+                    Committed Delivery
+                  </td>
+                  <td className="px-2 py-1 font-mono font-bold text-emerald-950">
+                    {new Date(quotation.committedDeliveryDate + 'T00:00:00').toLocaleDateString('en-GB', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                  </td>
+                </tr>
+              )}
               <tr className="border-b border-black">
                 <td className="font-medium px-2 py-1 bg-neutral-50/70 border-r border-black">Factory Phone</td>
                 <td className="px-2 py-1">

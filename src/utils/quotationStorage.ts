@@ -160,10 +160,23 @@ export interface ConfirmationDetails {
   salesmanName: string;
   qty: number;
   totalAmount: number;
+  committedDeliveryDate?: string;
 }
 
 /**
- * Marks quotation as confirmed, locks editing, updates client name, salesman and amounts.
+ * Returns YYYY-MM-DD for a date offset from today (defaults to 4th day from current date).
+ */
+export function getDefaultDeliveryDate(daysFromNow: number = 4): string {
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromNow);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * Marks quotation as confirmed, locks editing, updates client name, salesman, amounts and committed delivery date.
  */
 export function confirmQuotation(id: string, details: ConfirmationDetails): Quotation[] {
   const currentList = getSavedQuotations();
@@ -182,6 +195,7 @@ export function confirmQuotation(id: string, details: ConfirmationDetails): Quot
         },
         confirmedQty: details.qty,
         confirmedTotalAmount: details.totalAmount,
+        committedDeliveryDate: details.committedDeliveryDate || getDefaultDeliveryDate(4),
       };
     }
     return q;
@@ -191,6 +205,35 @@ export function confirmQuotation(id: string, details: ConfirmationDetails): Quot
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
   } catch (error) {
     console.error('Failed to confirm quotation in storage', error);
+  }
+
+  return updatedList;
+}
+
+/**
+ * Updates Job Card flags such as isCompleted, isInvoiced, or committedDeliveryDate.
+ */
+export function updateJobCardFlags(
+  id: string,
+  updates: { isCompleted?: boolean; isInvoiced?: boolean; committedDeliveryDate?: string }
+): Quotation[] {
+  const currentList = getSavedQuotations();
+  const now = new Date().toISOString();
+  const updatedList = currentList.map((q) => {
+    if (q.id === id) {
+      return {
+        ...q,
+        ...updates,
+        updatedAt: now,
+      };
+    }
+    return q;
+  });
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
+  } catch (error) {
+    console.error('Failed to update job card flags in storage', error);
   }
 
   return updatedList;

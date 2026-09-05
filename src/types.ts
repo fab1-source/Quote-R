@@ -66,6 +66,9 @@ export interface Quotation {
   salesmanName?: string;
   confirmedQty?: number;
   confirmedTotalAmount?: number;
+  committedDeliveryDate?: string; // e.g. "YYYY-MM-DD"
+  isCompleted?: boolean;
+  isInvoiced?: boolean;
   client: ClientInfo;
   from: FromInfo;
   scopeOfWork: string;
