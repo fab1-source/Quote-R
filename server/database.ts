@@ -116,6 +116,20 @@ export async function initDatabase(): Promise<DbStatus> {
 async function seedMongoIfEmpty() {
   if (!mongoDb) return;
   try {
+    // Explicitly create collections so they show up immediately in Compass
+    const existingCollections = await mongoDb.listCollections().toArray();
+    const collectionNames = existingCollections.map(c => c.name);
+
+    if (!collectionNames.includes('quotations')) {
+      await mongoDb.createCollection('quotations');
+    }
+    if (!collectionNames.includes('counters')) {
+      await mongoDb.createCollection('counters');
+    }
+    if (!collectionNames.includes('users')) {
+      await mongoDb.createCollection('users');
+    }
+
     const quoteCount = await mongoDb.collection('quotations').countDocuments();
     if (quoteCount === 0) {
       console.log('[DB] Seeding MongoDB with initial sample quotation...');
@@ -128,8 +142,75 @@ async function seedMongoIfEmpty() {
       console.log('[DB] Seeding MongoDB with default user accounts...');
       await mongoDb.collection('users').insertMany(DEFAULT_USERS as any);
     }
+
+    // Initialize atomic counter for current year/month if not present
+    const now = new Date();
+    const yy = String(now.getFullYear()).slice(-2);
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const prefix = `IGC/${yy}/${mm}/`;
+    await mongoDb.collection('counters').updateOne(
+      { _id: prefix as any },
+      { $setOnInsert: { seq: 1 } },
+      { upsert: true }
+    );
+
+    // Clean up any duplicate records that may have been created earlier
+    await cleanupMongoDuplicates();
   } catch (err) {
     console.error('[DB] Error seeding MongoDB:', err);
+  }
+}
+
+/**
+ * Scans MongoDB for any duplicate quotations sharing the exact same reference number.
+ * Keeps the most complete quotation (with client name, items, or latest timestamp)
+ * and safely removes ghost/blank duplicates.
+ */
+async function cleanupMongoDuplicates() {
+  if (!mongoDb) return;
+  try {
+    const allQuotes = await mongoDb.collection('quotations').find({}).toArray();
+    const byRef = new Map<string, any[]>();
+
+    for (const doc of allQuotes) {
+      const ref = (doc.from?.refNo || '').trim();
+      if (!ref) continue;
+      if (!byRef.has(ref)) byRef.set(ref, []);
+      byRef.get(ref)!.push(doc);
+    }
+
+    for (const [ref, docs] of byRef.entries()) {
+      if (docs.length > 1) {
+        console.log(`[DB] Detected ${docs.length} duplicate quotations for "${ref}". Cleaning up...`);
+
+        // Sort descending: prefer quotes with client name, more glass items, higher total, newer date
+        docs.sort((a, b) => {
+          const aHasClient = (a.client?.name || '').trim().length > 0 ? 1 : 0;
+          const bHasClient = (b.client?.name || '').trim().length > 0 ? 1 : 0;
+          if (aHasClient !== bHasClient) return bHasClient - aHasClient;
+
+          const aItemCount = (a.glassSections || []).reduce((acc: number, s: any) => acc + (s.items?.length || 0), 0);
+          const bItemCount = (b.glassSections || []).reduce((acc: number, s: any) => acc + (s.items?.length || 0), 0);
+          if (aItemCount !== bItemCount) return bItemCount - aItemCount;
+
+          const aTotal = a.confirmedTotalAmount || 0;
+          const bTotal = b.confirmedTotalAmount || 0;
+          if (aTotal !== bTotal) return bTotal - aTotal;
+
+          const aTime = new Date(a.updatedAt || a.createdAt || 0).getTime();
+          const bTime = new Date(b.updatedAt || b.createdAt || 0).getTime();
+          return bTime - aTime;
+        });
+
+        // Keep docs[0], delete the ghost duplicates
+        for (let i = 1; i < docs.length; i++) {
+          console.log(`[DB] Removing duplicate quote _id: ${docs[i]._id} (ref: ${ref}, client: "${docs[i].client?.name || 'none'}")`);
+          await mongoDb.collection('quotations').deleteOne({ _id: docs[i]._id });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[DB] Duplicate cleanup warning:', err);
   }
 }
 
@@ -198,21 +279,45 @@ export async function saveOrUpdateQuotation(quotation: Quotation): Promise<Quota
     createdAt: quotation.createdAt || now,
   };
 
+  const refNo = (quoteToSave.from?.refNo || '').trim();
+
   if (activeEngine === 'mongodb' && mongoDb) {
-    await mongoDb.collection('quotations').replaceOne(
-      { id: quoteToSave.id },
-      quoteToSave as any,
-      { upsert: true }
-    );
-    return quoteToSave;
+    try {
+      const cleanDoc: any = { ...quoteToSave };
+      delete cleanDoc._id; // Never let MongoDB immutable _id conflict
+
+      // Look for an existing quotation by id OR by exact from.refNo
+      const queryOr: any[] = [{ id: cleanDoc.id }];
+      if (refNo) {
+        queryOr.push({ 'from.refNo': refNo });
+      }
+
+      const existingDoc: any = await mongoDb.collection('quotations').findOne({ $or: queryOr });
+
+      if (existingDoc) {
+        // Keep the original id consistent and update in-place by _id
+        cleanDoc.id = existingDoc.id || cleanDoc.id;
+        await mongoDb.collection('quotations').replaceOne(
+          { _id: existingDoc._id },
+          cleanDoc
+        );
+      } else {
+        await mongoDb.collection('quotations').insertOne(cleanDoc);
+      }
+      return cleanDoc;
+    } catch (err) {
+      console.error('[DB] Error saving quotation to MongoDB:', err);
+      throw err;
+    }
   }
 
   const fileDb = readFileDb();
   const existingIdx = fileDb.quotations.findIndex(
-    (q) => q.id === quoteToSave.id || (q.from?.refNo && q.from.refNo === quoteToSave.from?.refNo)
+    (q) => q.id === quoteToSave.id || (refNo && q.from?.refNo?.trim() === refNo)
   );
 
   if (existingIdx >= 0) {
+    quoteToSave.id = fileDb.quotations[existingIdx].id || quoteToSave.id;
     fileDb.quotations[existingIdx] = quoteToSave;
   } else {
     fileDb.quotations.unshift(quoteToSave);
@@ -260,7 +365,7 @@ export async function getNextSequentialRef(date: Date = new Date()): Promise<{ n
 
       let maxFound = 0;
       for (const item of highestDoc) {
-        const ref = item.from?.refNo || '';
+        const ref = (item.from?.refNo || '').trim();
         if (ref.startsWith(prefix)) {
           const num = parseInt(ref.slice(prefix.length), 10);
           if (!isNaN(num) && num > maxFound) maxFound = num;
@@ -274,8 +379,16 @@ export async function getNextSequentialRef(date: Date = new Date()): Promise<{ n
         { upsert: true, returnDocument: 'after' }
       );
 
-      const seqFromCounter = counterRes?.value?.seq || counterRes?.seq || (maxFound + 1);
+      const seqFromCounter = counterRes?.value?.seq || counterRes?.seq || 0;
       serial = Math.max(maxFound + 1, seqFromCounter);
+
+      // Ensure counters collection never falls behind maxFound
+      if (seqFromCounter < serial) {
+        await mongoDb.collection('counters').updateOne(
+          { _id: prefix as any },
+          { $set: { seq: serial } }
+        );
+      }
     } catch (err) {
       console.error('[DB] Counter error in MongoDB, falling back to calculation:', err);
       serial = 1;

@@ -86,6 +86,25 @@ export function getSavedQuotations(): Quotation[] {
   }
 }
 
+let saveDebounceTimer: any = null;
+let pendingQuoteToSave: Quotation | null = null;
+
+/**
+ * Immediately flushes any pending quotation save to the server.
+ */
+export async function flushPendingQuotationSave(): Promise<Quotation | null> {
+  if (saveDebounceTimer) {
+    clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = null;
+  }
+  if (pendingQuoteToSave) {
+    const toSave = pendingQuoteToSave;
+    pendingQuoteToSave = null;
+    return await saveQuotationApi(toSave);
+  }
+  return null;
+}
+
 /**
  * Saves or updates a quotation in storage and syncs with backend server API.
  * If quote already exists (by id or refNo), updates it; otherwise prepends it.
@@ -98,12 +117,16 @@ export function saveQuotation(quote: Quotation): Quotation[] {
     updatedAt: now,
   };
 
+  const refNo = (updatedQuote.from?.refNo || '').trim();
+
   const existingIndex = currentList.findIndex(
-    (q) => q.id === updatedQuote.id || (q.from?.refNo && q.from.refNo === updatedQuote.from?.refNo)
+    (q) => q.id === updatedQuote.id || (refNo && q.from?.refNo?.trim() === refNo)
   );
 
   let newList: Quotation[];
   if (existingIndex >= 0) {
+    // Preserve existing id if present
+    updatedQuote.id = currentList[existingIndex].id || updatedQuote.id;
     newList = [...currentList];
     newList[existingIndex] = updatedQuote;
   } else {
@@ -116,10 +139,19 @@ export function saveQuotation(quote: Quotation): Quotation[] {
     console.error('Failed to save quotation to storage', error);
   }
 
-  // Push to centralized server database asynchronously
-  saveQuotationApi(updatedQuote).catch((err) => {
-    console.warn('Background server sync error:', err);
-  });
+  // Push to centralized server database with debounced execution
+  pendingQuoteToSave = updatedQuote;
+  if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+  saveDebounceTimer = setTimeout(() => {
+    saveDebounceTimer = null;
+    if (pendingQuoteToSave) {
+      const toSend = pendingQuoteToSave;
+      pendingQuoteToSave = null;
+      saveQuotationApi(toSend).catch((err) => {
+        console.warn('Background server sync error:', err);
+      });
+    }
+  }, 250);
 
   return newList;
 }
@@ -335,8 +367,38 @@ export async function loadQuotationsFromServer(): Promise<Quotation[]> {
     const serverQuotes = await fetchQuotationsApi();
     if (serverQuotes && Array.isArray(serverQuotes)) {
       if (serverQuotes.length > 0) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(serverQuotes));
-        return serverQuotes;
+        // Merge with any newer local edits in local storage so active work isn't overwritten
+        const localQuotes = getSavedQuotations();
+        const merged = serverQuotes.map((sq) => {
+          const localMatch = localQuotes.find(
+            (lq) => lq.id === sq.id || (lq.from?.refNo && lq.from.refNo === sq.from?.refNo)
+          );
+          if (localMatch && localMatch.updatedAt && sq.updatedAt) {
+            const localTime = new Date(localMatch.updatedAt).getTime();
+            const serverTime = new Date(sq.updatedAt).getTime();
+            if (localTime > serverTime) {
+              return localMatch;
+            }
+          }
+          return sq;
+        });
+
+        // Deduplicate any records with the same refNo
+        const seenRefs = new Set<string>();
+        const deduped: Quotation[] = [];
+        for (const q of merged) {
+          const ref = (q.from?.refNo || '').trim();
+          if (ref) {
+            if (seenRefs.has(ref)) continue;
+            seenRefs.add(ref);
+          }
+          deduped.push(q);
+        }
+
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(deduped));
+        } catch {}
+        return deduped;
       } else {
         // If server database is empty, seed it with local quotations
         const localQuotes = getSavedQuotations();
@@ -377,7 +439,7 @@ export async function createNewQuotationWithNextRefAsync(
     nextRefNo = generateNextQuoteNumber(date, quotes);
   }
 
-  const newQuote = createBlankQuotation();
+  const newQuote = createBlankQuotation(nextRefNo);
   newQuote.id = `quote-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
   newQuote.status = 'active';
   newQuote.from.refNo = nextRefNo;
@@ -386,9 +448,6 @@ export async function createNewQuotationWithNextRefAsync(
   if (authorName) {
     newQuote.authorName = authorName;
   }
-
-  // Save new quote to server immediately to reserve reference number
-  saveQuotation(newQuote);
 
   return newQuote;
 }
@@ -401,7 +460,7 @@ export function createNewQuotationWithNextRef(date: Date = new Date(), authorNam
   const nextRefNo = generateNextQuoteNumber(date, quotes);
   const dated = formatQuotationDate(date);
 
-  const newQuote = createBlankQuotation();
+  const newQuote = createBlankQuotation(nextRefNo);
   newQuote.id = `quote-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
   newQuote.status = 'active';
   newQuote.from.refNo = nextRefNo;

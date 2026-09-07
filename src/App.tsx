@@ -39,6 +39,7 @@ import {
   loadQuotationsFromServer,
   duplicateQuotation,
   initializeSampleIfEmpty,
+  flushPendingQuotationSave,
   STORAGE_KEY,
 } from './utils/quotationStorage';
 import { getCurrentUser, logoutUser } from './utils/userStorage';
@@ -101,7 +102,9 @@ export default function App() {
         setQuotations(quotes);
         setQuotation((prev) => {
           if (!prev || !prev.id) return quotes[0];
-          const match = quotes.find((q) => q.id === prev.id);
+          const match = quotes.find(
+            (q) => q.id === prev.id || (q.from?.refNo && q.from.refNo === prev.from?.refNo)
+          );
           return match || prev;
         });
       }
@@ -464,15 +467,20 @@ export default function App() {
     handleAddNewQuotation();
   };
 
-  // Save current quotation to dashboard
-  const handleSaveCurrentQuote = () => {
+  // Save current quotation to dashboard and intranet database
+  const handleSaveCurrentQuote = async () => {
     if (currentUser?.role === 'VIEWER') {
       showNotification('Read-only mode: Viewers cannot save modifications.', 'warning');
       return;
     }
     const updated = saveQuotation(quotation);
     setQuotations(updated);
-    showNotification(`Saved ${quotation.from.refNo} to Dashboard!`, 'success');
+    try {
+      await flushPendingQuotationSave();
+      showNotification(`Saved ${quotation.from.refNo} to Intranet Database & Dashboard!`, 'success');
+    } catch {
+      showNotification(`Saved ${quotation.from.refNo} locally`, 'info');
+    }
   };
 
   // Apply items pasted into the global/modal paste section
@@ -576,12 +584,16 @@ export default function App() {
               onLoadSample={handleLoadSample}
               onNewQuotation={handleNewQuotation}
               onOpenHistory={() => setIsHistoryOpen(true)}
-              onBackToDashboard={() => {
+              onBackToDashboard={async () => {
                 // Ensure current changes are saved and return to dashboard
                 if (!isLocked && !isProductionUser && !isViewerUser) {
                   saveQuotation(quotation);
+                  try {
+                    await flushPendingQuotationSave();
+                  } catch {}
                 }
-                setQuotations(getSavedQuotations());
+                const fresh = await loadQuotationsFromServer();
+                setQuotations(fresh);
                 setViewMode('dashboard');
               }}
               onSaveCurrentQuote={!isLocked && !isProductionUser && !isViewerUser ? handleSaveCurrentQuote : undefined}
