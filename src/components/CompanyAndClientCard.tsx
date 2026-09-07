@@ -54,6 +54,10 @@ export const CompanyAndClientCard: React.FC<CompanyAndClientCardProps> = ({
               <span className="font-semibold text-slate-700">
                 {quotation.client.name || 'Not filled'}
               </span>
+              {' '}• Author:{' '}
+              <span className="font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 font-mono">
+                {quotation.authorName || 'ESTIMATOR1'}
+              </span>
               {quotation.salesmanName && (
                 <>
                   {' '}• Salesman:{' '}
@@ -77,40 +81,64 @@ export const CompanyAndClientCard: React.FC<CompanyAndClientCardProps> = ({
 
       {isExpanded && (
         <div className="p-6 space-y-6">
-          {/* Salesman's Box (Order Assignment) */}
-          <div className="bg-amber-50/70 border border-amber-200/90 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800 shrink-0">
-                <UserCheck className="w-5 h-5" />
+          {/* Salesman & Quotation Author Box */}
+          <div className="bg-amber-50/70 border border-amber-200/90 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-2xs">
+            {/* Quotation Author (Uneditable) */}
+            <div className="flex items-center gap-3 md:border-r md:border-amber-200/90 md:pr-6">
+              <div className="w-9 h-9 rounded-lg bg-slate-100 border border-slate-300 flex items-center justify-center text-slate-700 shrink-0">
+                <Lock className="w-4 h-4" />
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
-                  <span>Salesman / Order Assigned To</span>
-                  {readOnly && (
-                    <span className="text-[10px] lowercase font-normal bg-amber-200/70 text-amber-900 px-1.5 py-0.2 rounded border border-amber-300">
-                      locked
-                    </span>
-                  )}
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <span>Quotation Author</span>
+                  <span className="text-[10px] lowercase font-normal bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded">
+                    uneditable
+                  </span>
                 </label>
-                <p className="text-[11px] text-amber-800/80">
-                  Mention the name of salesman to whom this order belongs
-                </p>
+                <div className="mt-1">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm font-bold font-mono text-slate-900 shadow-2xs">
+                    <Lock className="w-3.5 h-3.5 text-slate-400" />
+                    {quotation.authorName || 'ESTIMATOR1'}
+                  </span>
+                </div>
               </div>
             </div>
-            <div className="sm:w-80">
-              <input
-                type="text"
-                disabled={readOnly}
-                value={quotation.salesmanName || ''}
-                onChange={(e) =>
-                  onUpdateQuotation({
-                    ...quotation,
-                    salesmanName: e.target.value,
-                  })
-                }
-                placeholder="e.g. Shiju / Mohammed / Rajesh"
-                className="w-full px-3.5 py-2 bg-white disabled:bg-slate-100 disabled:text-slate-600 disabled:cursor-not-allowed border border-amber-300 rounded-lg text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors shadow-2xs"
-              />
+
+            {/* Salesman / Order Assigned To */}
+            <div className="flex-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800 shrink-0">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                    <span>Salesman / Order Assigned To</span>
+                    {readOnly && (
+                      <span className="text-[10px] lowercase font-normal bg-amber-200/70 text-amber-900 px-1.5 py-0.2 rounded border border-amber-300">
+                        locked
+                      </span>
+                    )}
+                  </label>
+                  <p className="text-[11px] text-amber-800/80">
+                    Mention the name of salesman to whom this order belongs
+                  </p>
+                </div>
+              </div>
+              <div className="sm:w-64">
+                <input
+                  type="text"
+                  disabled={readOnly}
+                  value={quotation.salesmanName || ''}
+                  onChange={(e) =>
+                    onUpdateQuotation({
+                      ...quotation,
+                      salesmanName: e.target.value,
+                    })
+                  }
+                  placeholder="e.g. Shiju / Mohammed / Rajesh"
+                  className="w-full px-3.5 py-2 bg-white disabled:bg-slate-100 disabled:text-slate-600 disabled:cursor-not-allowed border border-amber-300 rounded-lg text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors shadow-2xs"
+                />
+              </div>
             </div>
           </div>
 

@@ -64,6 +64,7 @@ export interface Quotation {
   cancelledAt?: string;
   confirmedAt?: string;
   salesmanName?: string;
+  authorName?: string; // e.g. "HOD", "ESTIMATOR1", "ESTIMATOR2" (uneditable quotation author)
   confirmedQty?: number;
   confirmedTotalAmount?: number;
   committedDeliveryDate?: string; // e.g. "YYYY-MM-DD"

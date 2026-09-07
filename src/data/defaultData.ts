@@ -81,6 +81,7 @@ export const createBlankQuotation = (initialRefNo?: string): Quotation => {
       refNo: ref,
       dated: new Date().toLocaleDateString('en-GB').replace(/\//g, '-'),
     },
+    authorName: "ESTIMATOR1",
     scopeOfWork: "Description/ Scope of Work",
     glassSections: [createEmptyGlassSection(1)],
     applyMinAreaRule: true,

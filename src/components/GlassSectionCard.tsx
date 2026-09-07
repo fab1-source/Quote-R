@@ -7,7 +7,8 @@ import {
   ChevronUp,
   Settings2,
   Sparkles,
-  Layers
+  Layers,
+  Calculator,
 } from 'lucide-react';
 import { GlassSection, GlassItem } from '../types';
 import { calculatePerSqm, calculateTotalSqm, calculateSectionTotals } from '../utils/calculations';
@@ -69,6 +70,23 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
 
   const { totalQty, totalSqm, effectiveAmount } = calculateSectionTotals(section);
 
+  const handleApplyAutoAmount = () => {
+    const rate = typeof section.ratePerSqm === 'number' ? section.ratePerSqm : (parseFloat(String(section.ratePerSqm)) || 0);
+    const updatedItems = section.items.map((item) => {
+      const rowAmt = Number((rate * (Number(item.totalSqm) || 0)).toFixed(2));
+      return {
+        ...item,
+        ratePerSqm: rate,
+        amount: rowAmt,
+      };
+    });
+    onUpdateSection({
+      ...section,
+      useCalculatedAmount: true,
+      items: updatedItems,
+    });
+  };
+
   const handleUpdateItem = (itemId: string, field: keyof GlassItem, value: any) => {
     const updatedItems = section.items.map((item) => {
       if (item.id !== itemId) return item;
@@ -82,6 +100,15 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
 
         updated.perSqm = calculatePerSqm(width, height, applyMinRule, minThreshold);
         updated.totalSqm = calculateTotalSqm(qty, updated.perSqm);
+
+        const rate = typeof updated.ratePerSqm === 'number' ? updated.ratePerSqm : (section.ratePerSqm || 0);
+        updated.amount = Number((rate * (Number(updated.totalSqm) || 0)).toFixed(2));
+      }
+
+      if (field === 'ratePerSqm') {
+        const rate = typeof value === 'number' ? value : (parseFloat(value) || 0);
+        updated.ratePerSqm = value;
+        updated.amount = Number((rate * (Number(updated.totalSqm) || 0)).toFixed(2));
       }
 
       return updated;
@@ -95,6 +122,7 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
 
   const handleAddItem = () => {
     const nextSNo = section.items.length + 1;
+    const defaultRate = typeof section.ratePerSqm === 'number' && section.ratePerSqm > 0 ? section.ratePerSqm : undefined;
     const newItem: GlassItem = {
       id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       sNo: nextSNo,
@@ -104,6 +132,8 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
       height: 0,
       perSqm: 0,
       totalSqm: 0,
+      ratePerSqm: defaultRate,
+      amount: 0,
     };
 
     onUpdateSection({
@@ -133,15 +163,27 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
   };
 
   const handleApplyPastedItems = (pastedItems: GlassItem[], mode: 'replace' | 'append') => {
+    const defaultRate = typeof section.ratePerSqm === 'number' && section.ratePerSqm > 0 ? section.ratePerSqm : undefined;
+    const preparedPasted = pastedItems.map((item) => {
+      const itemRate = typeof item.ratePerSqm === 'number' ? item.ratePerSqm : defaultRate;
+      const effRate = typeof itemRate === 'number' ? itemRate : 0;
+      const rowAmount = Number((effRate * (Number(item.totalSqm) || 0)).toFixed(2));
+      return {
+        ...item,
+        ratePerSqm: itemRate,
+        amount: rowAmount,
+      };
+    });
+
     let finalItems: GlassItem[] = [];
 
     if (mode === 'replace') {
-      finalItems = pastedItems.map((item, idx) => ({ ...item, sNo: idx + 1 }));
+      finalItems = preparedPasted.map((item, idx) => ({ ...item, sNo: idx + 1 }));
     } else {
       const startIndex = section.items.length;
       finalItems = [
         ...section.items,
-        ...pastedItems.map((item, idx) => ({ ...item, sNo: startIndex + idx + 1 })),
+        ...preparedPasted.map((item, idx) => ({ ...item, sNo: startIndex + idx + 1 })),
       ];
     }
 
@@ -360,75 +402,38 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
           </span>
         </div>
 
-        {/* Amount in AED configuration */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 font-medium">Rate/Sqm:</span>
+        {/* Rate/Sqm and Auto Amount Action (Section amount removed) */}
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 bg-white px-2.5 py-1 rounded-md border border-slate-300 shadow-2xs">
+            <span className="text-slate-600 font-bold text-xs">Rate/Sqm:</span>
             <input
               type="number"
-              step="0.1"
+              step="0.01"
+              min="0"
               disabled={readOnly}
-              value={section.ratePerSqm || ''}
+              value={section.ratePerSqm !== undefined ? section.ratePerSqm : ''}
               onChange={(e) => {
-                const val = parseFloat(e.target.value) || 0;
+                const val = e.target.value === '' ? undefined : parseFloat(e.target.value);
                 onUpdateSection({
                   ...section,
                   ratePerSqm: val,
-                  sectionAmount: section.useCalculatedAmount ? Number((totalSqm * val).toFixed(2)) : section.sectionAmount
                 });
               }}
               placeholder="0.00"
-              className="w-20 text-right text-xs py-1 px-2 border border-slate-200 disabled:bg-slate-100 disabled:text-slate-600 disabled:cursor-not-allowed rounded-md bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="w-20 text-right text-xs py-0.5 px-1.5 border border-slate-200 disabled:bg-slate-100 disabled:text-slate-600 rounded bg-white text-slate-800 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
-          <label className={`inline-flex items-center gap-1.5 select-none text-slate-600 ${readOnly ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}>
-            <input
-              type="checkbox"
-              disabled={readOnly}
-              checked={section.useCalculatedAmount || false}
-              onChange={(e) => {
-                const isCalc = e.target.checked;
-                const newAmount = isCalc && section.ratePerSqm
-                  ? Number((totalSqm * section.ratePerSqm).toFixed(2))
-                  : section.sectionAmount || 0;
-                onUpdateSection({
-                  ...section,
-                  useCalculatedAmount: isCalc,
-                  sectionAmount: newAmount
-                });
-              }}
-              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20 disabled:cursor-not-allowed"
-            />
+          <button
+            type="button"
+            disabled={readOnly || section.items.length === 0}
+            onClick={handleApplyAutoAmount}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold text-xs rounded-md shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+            title="Copy this Rate/Sqm to all rows in this section"
+          >
+            <Calculator className="w-3.5 h-3.5" />
             <span>Auto Amount</span>
-          </label>
-
-          <div className="flex items-center gap-2">
-            <span className="text-slate-700 font-bold">Section Amount:</span>
-            <div className="relative">
-              <input
-                type="number"
-                step="0.01"
-                disabled={readOnly || section.useCalculatedAmount}
-                value={effectiveAmount || ''}
-                onChange={(e) =>
-                  onUpdateSection({
-                    ...section,
-                    sectionAmount: parseFloat(e.target.value) || 0,
-                  })
-                }
-                placeholder="0.00"
-                className={`w-28 text-right font-bold text-xs py-1 px-2 border rounded-md ${
-                  section.useCalculatedAmount || readOnly
-                    ? 'bg-slate-100 text-slate-600 border-slate-200 cursor-not-allowed'
-                    : 'bg-white text-blue-800 border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
-                }`}
-              />
-              <span className="absolute right-7 top-1/2 -translate-y-1/2 pointer-events-none text-[10px] text-slate-400">
-                AED
-              </span>
-            </div>
-          </div>
+          </button>
         </div>
       </div>
 
@@ -481,6 +486,8 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
                   <th className="border border-sky-200/90 py-2 px-3 w-28 text-right">Height (mm)</th>
                   <th className="border border-sky-200/90 py-2 px-3 w-24 text-right">Per Sqm</th>
                   <th className="border border-sky-200/90 py-2 px-3 w-28 text-right">Area (sqm)</th>
+                  <th className="border border-sky-200/90 py-2 px-3 w-28 text-right">Rate/Sqm</th>
+                  <th className="border border-sky-200/90 py-2 px-3 w-32 text-right">Total Amount</th>
                   <th className="border border-sky-200/90 py-2 px-2 w-8 text-center"></th>
                 </tr>
               </thead>
@@ -551,6 +558,32 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
                     <td className="border border-slate-200 py-1.5 px-3 text-right font-bold text-slate-900 font-mono text-xs bg-slate-50/50">
                       {item.totalSqm > 0 ? item.totalSqm.toFixed(2) : '-'}
                     </td>
+                    {/* Rate/Sqm column (editable for each piece) */}
+                    <td className="border border-slate-200 p-1 bg-white">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        disabled={readOnly}
+                        placeholder="0.00"
+                        value={item.ratePerSqm !== undefined ? item.ratePerSqm : ''}
+                        onChange={(e) => {
+                          const val = e.target.value === '' ? undefined : parseFloat(e.target.value);
+                          handleUpdateItem(item.id, 'ratePerSqm', val);
+                        }}
+                        className="w-full text-right font-mono font-semibold text-xs py-1 px-2 bg-white border border-slate-200 hover:border-blue-500 focus:border-blue-600 focus:ring-1 focus:ring-blue-500 rounded-none disabled:bg-slate-50 disabled:border-slate-200 disabled:text-slate-800"
+                      />
+                    </td>
+                    {/* Total Amount column (formula based, uneditable) */}
+                    <td className="border border-slate-200 py-1.5 px-3 text-right font-bold text-slate-900 font-mono text-xs bg-slate-50/70 select-none">
+                      {(() => {
+                        const rate = typeof item.ratePerSqm === 'number' ? item.ratePerSqm : (section.ratePerSqm || 0);
+                        const rowAmt = Number((rate * (Number(item.totalSqm) || 0)).toFixed(2));
+                        return rowAmt > 0
+                          ? rowAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '0.00';
+                      })()}
+                    </td>
                     <td className="border border-slate-200 p-1 text-center bg-white">
                       {!readOnly && (
                         <button
@@ -567,26 +600,32 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
                 ))}
               </tbody>
               {/* Section Subtotal Footer Row */}
-              <tfoot className="bg-slate-100 font-semibold text-xs">
+              <tfoot className="bg-slate-100 font-semibold text-xs border-t-2 border-slate-300">
                 <tr>
-                  <td colSpan={2} className="border border-slate-300 py-2 px-3 text-center uppercase tracking-wide text-slate-700 font-bold">
+                  <td colSpan={2} className="border border-slate-300 py-2.5 px-3 text-center uppercase tracking-wide text-slate-700 font-bold bg-slate-200/70">
                     TOTAL ({section.sectionCode})
                   </td>
-                  <td className="border border-slate-300 py-2 px-3 text-right font-bold text-slate-900 font-mono">
+                  <td className="border border-slate-300 py-2.5 px-3 text-right font-bold text-slate-900 font-mono">
                     {totalQty.toLocaleString()}
                   </td>
-                  <td colSpan={3} className="border border-slate-300 py-2 px-3 text-right text-slate-600 font-medium">
-                    Total Sqm:
+                  <td colSpan={3} className="border border-slate-300 py-2.5 px-3 text-right text-slate-600 font-medium">
+                    Total Area:
                   </td>
-                  <td className="border border-slate-300 py-2 px-3 text-right font-bold text-slate-900 font-mono">
+                  <td className="border border-slate-300 py-2.5 px-3 text-right font-bold text-slate-900 font-mono">
                     {totalSqm.toLocaleString()}
                   </td>
-                  <td className="border border-slate-300 py-2 px-2 text-center">
+                  <td className="border border-slate-300 py-2.5 px-3 text-right text-slate-600 font-medium">
+                    Total Amount:
+                  </td>
+                  <td className="border border-slate-300 py-2.5 px-3 text-right font-bold text-blue-900 font-mono text-sm bg-blue-50/70">
+                    AED {effectiveAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="border border-slate-300 py-2.5 px-2 text-center">
                     {!readOnly && section.items.length > 0 && (
                       <button
                         type="button"
                         onClick={handleClearAllItems}
-                        className="text-[10px] uppercase font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
+                        className="text-[10px] uppercase font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
                         title="Clear all rows"
                       >
                         Clear

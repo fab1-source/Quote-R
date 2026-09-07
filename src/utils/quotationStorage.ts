@@ -281,7 +281,7 @@ export function unconfirmQuotation(id: string): Quotation[] {
 /**
  * Creates a brand new quotation with the next sequential quote number.
  */
-export function createNewQuotationWithNextRef(date: Date = new Date()): Quotation {
+export function createNewQuotationWithNextRef(date: Date = new Date(), authorName?: string): Quotation {
   const quotes = getSavedQuotations();
   const nextRefNo = generateNextQuoteNumber(date, quotes);
   const dated = formatQuotationDate(date);
@@ -292,6 +292,9 @@ export function createNewQuotationWithNextRef(date: Date = new Date()): Quotatio
   newQuote.from.refNo = nextRefNo;
   newQuote.from.dated = dated;
   newQuote.title = `Quotation ${nextRefNo}`;
+  if (authorName) {
+    newQuote.authorName = authorName;
+  }
 
   return newQuote;
 }
@@ -299,7 +302,7 @@ export function createNewQuotationWithNextRef(date: Date = new Date()): Quotatio
 /**
  * Duplicates an existing quotation, assigning the next sequential reference number.
  */
-export function duplicateQuotation(id: string): { newQuotation: Quotation; allQuotes: Quotation[] } {
+export function duplicateQuotation(id: string, authorName?: string): { newQuotation: Quotation; allQuotes: Quotation[] } {
   const quotes = getSavedQuotations();
   const target = quotes.find((q) => q.id === id);
   const now = new Date();
@@ -313,6 +316,7 @@ export function duplicateQuotation(id: string): { newQuotation: Quotation; allQu
     title: `${source.client.name ? source.client.name + ' - ' : ''}${nextRefNo}`,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
+    authorName: authorName || source.authorName || 'ESTIMATOR1',
     from: {
       ...source.from,
       refNo: nextRefNo,

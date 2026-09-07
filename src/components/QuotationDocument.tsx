@@ -392,6 +392,12 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
                   )}
                 </td>
               </tr>
+              <tr className="border-b border-black bg-neutral-50/70">
+                <td className="font-medium px-2 py-1 bg-neutral-100 border-r border-black">Author</td>
+                <td className="px-2 py-1 font-bold text-neutral-900 font-mono">
+                  {quotation.authorName || 'ESTIMATOR1'}
+                </td>
+              </tr>
               {quotation.salesmanName && (
                 <tr className="border-b border-black bg-neutral-50/70">
                   <td className="font-medium px-2 py-1 bg-neutral-100 border-r border-black">Salesman</td>
@@ -493,23 +499,24 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
                         <td className="border-r border-black text-center py-0.5 px-1 font-mono">
                           {item.totalSqm > 0 ? item.totalSqm.toFixed(2) : ''}
                         </td>
-                        <td className="border-r border-black text-center py-0.5 px-1">
-                          {item.ratePerSqm ? item.ratePerSqm.toFixed(2) : ''}
+                        <td className="border-r border-black text-right py-0.5 px-1 font-mono">
+                          {(() => {
+                            const rate = typeof item.ratePerSqm === 'number' ? item.ratePerSqm : section.ratePerSqm;
+                            return rate !== undefined && rate > 0 ? Number(rate).toFixed(2) : '';
+                          })()}
                         </td>
-                        {/* The Amount in AED column is merged vertically across the section */}
-                        {idx === 0 && (
-                          <td
-                            rowSpan={section.items.length}
-                            className="text-center font-bold text-neutral-900 align-middle py-1 px-2 bg-neutral-50/30 text-xs"
-                          >
-                            {effectiveAmount > 0
-                              ? effectiveAmount.toLocaleString('en-US', {
+                        <td className="text-right py-0.5 px-1 font-mono text-neutral-900">
+                          {(() => {
+                            const rate = typeof item.ratePerSqm === 'number' ? item.ratePerSqm : (section.ratePerSqm || 0);
+                            const amt = Number((rate * (Number(item.totalSqm) || 0)).toFixed(2));
+                            return amt > 0
+                              ? amt.toLocaleString('en-US', {
                                   minimumFractionDigits: 2,
                                   maximumFractionDigits: 2,
                                 })
-                              : ''}
-                          </td>
-                        )}
+                              : '';
+                          })()}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -529,7 +536,7 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
                       {totalSqm.toFixed(2)}
                     </td>
                     <td className="border-r border-black"></td>
-                    <td className="text-center py-1 px-1 font-mono text-xs">
+                    <td className="text-right py-1 px-1 font-mono text-xs font-bold">
                       {effectiveAmount > 0
                         ? effectiveAmount.toLocaleString('en-US', {
                             minimumFractionDigits: 2,

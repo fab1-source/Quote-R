@@ -42,8 +42,22 @@ export function calculateSectionTotals(section: GlassSection): {
     section.items.reduce((sum, item) => sum + (Number(item.totalSqm) || 0), 0).toFixed(2)
   );
 
-  let effectiveAmount = Number(section.sectionAmount) || 0;
-  if (section.useCalculatedAmount && section.ratePerSqm && section.ratePerSqm > 0) {
+  let itemsAmount = 0;
+  if (section.items.length > 0) {
+    itemsAmount = section.items.reduce((sum, item) => {
+      const rate = typeof item.ratePerSqm === 'number' ? item.ratePerSqm : (section.ratePerSqm || 0);
+      const rowAmt = typeof item.amount === 'number'
+        ? item.amount
+        : Number((rate * (Number(item.totalSqm) || 0)).toFixed(2));
+      return sum + rowAmt;
+    }, 0);
+  }
+
+  let effectiveAmount = Number(itemsAmount.toFixed(2));
+  // If items didn't compute an amount but a manual sectionAmount was previously set, use that
+  if (effectiveAmount === 0 && Number(section.sectionAmount) > 0) {
+    effectiveAmount = Number(section.sectionAmount);
+  } else if (effectiveAmount === 0 && section.useCalculatedAmount && section.ratePerSqm && section.ratePerSqm > 0) {
     effectiveAmount = Number((totalSqm * section.ratePerSqm).toFixed(2));
   }
 
