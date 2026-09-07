@@ -73,7 +73,8 @@ interface DashboardViewProps {
 const FactoryCommentsCell: React.FC<{
   quotation: Quotation;
   onSaveComment: (id: string, comment: string) => void;
-}> = ({ quotation, onSaveComment }) => {
+  readOnly?: boolean;
+}> = ({ quotation, onSaveComment, readOnly = false }) => {
   const [commentText, setCommentText] = useState(quotation.factoryComments || '');
   const [isSaved, setIsSaved] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
@@ -83,19 +84,35 @@ const FactoryCommentsCell: React.FC<{
   }, [quotation.factoryComments]);
 
   const handleSave = () => {
+    if (readOnly) return;
     onSaveComment(quotation.id, commentText);
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2000);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly) return;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSave();
     }
   };
 
-  const hasUnsavedChanges = commentText !== (quotation.factoryComments || '');
+  const hasUnsavedChanges = !readOnly && commentText !== (quotation.factoryComments || '');
+
+  if (readOnly) {
+    return (
+      <div className="w-full min-w-[210px] max-w-[280px]" onClick={(e) => e.stopPropagation()}>
+        <div className="text-xs p-2 border rounded-lg border-slate-200 bg-slate-50 text-slate-700 min-h-[34px] leading-tight">
+          {commentText ? (
+            <span className="font-medium">{commentText}</span>
+          ) : (
+            <span className="text-slate-400 italic">No factory comments</span>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full min-w-[210px] max-w-[280px]" onClick={(e) => e.stopPropagation()}>
@@ -158,6 +175,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const isProduction = currentUser.role === 'PRODUCTION';
   const isAdmin = currentUser.role === 'ADMIN';
+  const isEstimator = currentUser.role === 'ESTIMATION';
+  const isViewer = currentUser.role === 'VIEWER';
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
@@ -275,11 +294,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   };
 
   // Toggle Job Card Invoiced flag:
-  // When checked: marks as invoiced, which moves it from 'running' to 'completed' tab.
-  // When unchecked: unmarks as invoiced, which moves it back from 'completed' to 'running' tab.
+  // Rules:
+  // - Only Admin and Production can click invoice; Estimator cannot.
+  // - Viewer cannot edit or invoice.
+  // - Production cannot uncheck the invoiced box (Admin only).
   const handleToggleInvoiced = (id: string) => {
     const target = quotations.find((q) => q.id === id);
     if (!target) return;
+
+    if (isEstimator) {
+      if (onNotification) {
+        onNotification('Access restricted: Estimators cannot toggle Invoiced status. Only Admin and Production have invoicing access.', 'error');
+      }
+      return;
+    }
+
+    if (isViewer) {
+      if (onNotification) {
+        onNotification('Access restricted: Viewers have read-only audit access and cannot modify job cards.', 'error');
+      }
+      return;
+    }
+
+    if (isProduction && target.isInvoiced) {
+      if (onNotification) {
+        onNotification('Access restricted: Production cannot uncheck an already invoiced job card. Only Admin can uncheck.', 'error');
+      }
+      return;
+    }
+
     const newInvoiced = !target.isInvoiced;
     if (onUpdateJobCardFlags) {
       onUpdateJobCardFlags(id, { isInvoiced: newInvoiced, isCompleted: newInvoiced });
@@ -631,8 +674,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     let pendingCount = 0;
     let cancelledCount = 0;
 
+    const salesmanPendingMap: Record<string, { amount: number; count: number }> = {};
+    const salesmanConfirmedMap: Record<string, { amount: number; count: number }> = {};
+
     quotations.forEach((q) => {
       const { totalAmountAED } = calculateQuotationTotals(q);
+      const salesman = q.salesmanName?.trim() || 'Unassigned';
 
       if (q.status === 'confirmed') {
         confirmedCount++;
@@ -640,13 +687,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           ? q.confirmedTotalAmount
           : totalAmountAED;
         confirmedJobsValue += confirmedAmt;
+
+        if (!salesmanConfirmedMap[salesman]) {
+          salesmanConfirmedMap[salesman] = { amount: 0, count: 0 };
+        }
+        salesmanConfirmedMap[salesman].amount += confirmedAmt;
+        salesmanConfirmedMap[salesman].count += 1;
       } else if (q.status === 'cancelled') {
         cancelledCount++;
       } else {
         pendingCount++;
         pendingPipelineValue += totalAmountAED;
+
+        if (!salesmanPendingMap[salesman]) {
+          salesmanPendingMap[salesman] = { amount: 0, count: 0 };
+        }
+        salesmanPendingMap[salesman].amount += totalAmountAED;
+        salesmanPendingMap[salesman].count += 1;
       }
     });
+
+    const salesmanPendingBreakdown = Object.entries(salesmanPendingMap)
+      .map(([name, data]) => ({ name, amount: data.amount, count: data.count }))
+      .sort((a, b) => b.amount - a.amount);
+
+    const salesmanConfirmedBreakdown = Object.entries(salesmanConfirmedMap)
+      .map(([name, data]) => ({ name, amount: data.amount, count: data.count }))
+      .sort((a, b) => b.amount - a.amount);
 
     // Current month count (e.g. 26/09)
     const now = new Date();
@@ -660,6 +727,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       cancelledCount,
       pendingPipelineValue,
       confirmedJobsValue,
+      salesmanPendingBreakdown,
+      salesmanConfirmedBreakdown,
       thisMonthCount,
       currentYyMm,
     };
@@ -701,6 +770,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     let completedPcs = 0;
     let completedSqm = 0;
 
+    const salesmanMap: Record<string, { amount: number; count: number }> = {};
+
     quotations.forEach((q) => {
       if (q.status !== 'confirmed') return;
 
@@ -709,6 +780,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         ? q.confirmedTotalAmount
         : totalAmountAED;
       const pcs = typeof q.confirmedQty === 'number' ? q.confirmedQty : grandTotalQty;
+      const salesman = q.salesmanName?.trim() || 'Unassigned';
+
+      if (!salesmanMap[salesman]) {
+        salesmanMap[salesman] = { amount: 0, count: 0 };
+      }
+      salesmanMap[salesman].amount += amt;
+      salesmanMap[salesman].count += 1;
 
       if (q.isInvoiced) {
         completedCount++;
@@ -728,6 +806,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const finalPcs = runningPcs + completedPcs;
     const finalSqm = runningSqm + completedSqm;
 
+    const salesmanBreakdown = Object.entries(salesmanMap)
+      .map(([name, data]) => ({ name, amount: data.amount, count: data.count }))
+      .sort((a, b) => b.amount - a.amount);
+
     return {
       runningAmount,
       runningCount,
@@ -741,6 +823,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       finalCount,
       finalPcs,
       finalSqm,
+      salesmanBreakdown,
     };
   }, [quotations]);
 
@@ -767,7 +850,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       ? 'bg-red-700'
                       : currentUser.role === 'ESTIMATION'
                       ? 'bg-blue-700'
-                      : 'bg-emerald-700'
+                      : currentUser.role === 'PRODUCTION'
+                      ? 'bg-emerald-700'
+                      : 'bg-purple-700'
                   }`}
                 >
                   {currentUser.username.substring(0, 2).toUpperCase()}
@@ -780,7 +865,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         ? 'bg-red-50 text-red-800 border-red-200'
                         : currentUser.role === 'ESTIMATION'
                         ? 'bg-blue-50 text-blue-800 border-blue-200'
-                        : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                        : currentUser.role === 'PRODUCTION'
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                        : 'bg-purple-50 text-purple-800 border-purple-200'
                     }`}
                   >
                     {currentUser.role}
@@ -814,16 +901,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </h1>
                   <span
                     className={`px-2 py-0.5 text-xs font-semibold rounded-md uppercase tracking-wider border ${
-                      isProduction
+                      isViewer
+                        ? 'bg-purple-50 text-purple-900 border-purple-300'
+                        : isProduction
                         ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
                         : 'bg-red-50 text-[#7B1818] border-red-200/80'
                     }`}
                   >
-                    {isProduction ? 'Factory Production Portal' : 'Quotations Portal'}
+                    {isViewer
+                      ? 'Auditor Viewer Portal'
+                      : isProduction
+                      ? 'Factory Production Portal'
+                      : 'Quotations Portal'}
                   </span>
                 </div>
                 <p className="text-slate-600 text-sm mt-1">
-                  {isProduction
+                  {isViewer
+                    ? 'Read-only audit inspection: View quotes, job cards, and cost sheets without editing permissions'
+                    : isProduction
                     ? 'Authorized Factory View: Review cutting lists, glass types, piece sizes, and fabrication orders'
                     : 'Manage, track, and generate official glass supply quotations with sequential ref numbers'}
                 </p>
@@ -833,40 +928,62 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {/* Primary Actions (Hidden for PRODUCTION users) */}
             {!isProduction && (
               <div className="flex items-center gap-3 flex-wrap">
-                <button
-                  type="button"
-                  onClick={onAddNewQuotation}
-                  id="btn-add-new-quotation"
-                  className="px-5 py-2.5 bg-[#7B1818] hover:bg-[#631313] text-white rounded-lg shadow-sm hover:shadow-md font-medium text-sm flex items-center gap-2.5 transition-all transform active:scale-98 cursor-pointer"
-                >
-                  <Plus className="w-5 h-5 text-white/90" />
-                  <span className="font-semibold">Add New Quotation</span>
-                  <span className="hidden sm:inline-block text-[11px] bg-white/20 px-2 py-0.5 rounded text-white/90 font-mono">
-                    {nextQuoteNumber}
-                  </span>
-                </button>
+                {isViewer ? (
+                  <div className="flex items-center gap-2">
+                    <div className="px-3.5 py-2 bg-purple-50 border border-purple-200 rounded-lg text-purple-900 text-xs font-semibold flex items-center gap-2">
+                      <Lock className="w-3.5 h-3.5 text-purple-700" />
+                      <span>Auditor Mode (Read-Only)</span>
+                    </div>
+                    {quotations.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={onExportBackup}
+                        className="px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Download full JSON backup of all quotations"
+                      >
+                        <Download className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Export Backup</span>
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={onAddNewQuotation}
+                      id="btn-add-new-quotation"
+                      className="px-5 py-2.5 bg-[#7B1818] hover:bg-[#631313] text-white rounded-lg shadow-sm hover:shadow-md font-medium text-sm flex items-center gap-2.5 transition-all transform active:scale-98 cursor-pointer"
+                    >
+                      <Plus className="w-5 h-5 text-white/90" />
+                      <span className="font-semibold">Add New Quotation</span>
+                      <span className="hidden sm:inline-block text-[11px] bg-white/20 px-2 py-0.5 rounded text-white/90 font-mono">
+                        {nextQuoteNumber}
+                      </span>
+                    </button>
 
-                <label className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors">
-                  <Upload className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Import JSON</span>
-                  <input
-                    type="file"
-                    accept=".json"
-                    onChange={onImportBackup}
-                    className="hidden"
-                  />
-                </label>
+                    <label className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors">
+                      <Upload className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Import JSON</span>
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={onImportBackup}
+                        className="hidden"
+                      />
+                    </label>
 
-                {quotations.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={onExportBackup}
-                    className="px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors cursor-pointer"
-                    title="Download full JSON backup of all quotations"
-                  >
-                    <Download className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Backup All</span>
-                  </button>
+                    {quotations.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={onExportBackup}
+                        className="px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Download full JSON backup of all quotations"
+                      >
+                        <Download className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Backup All</span>
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -970,37 +1087,78 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
               </div>
 
-              <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Pipeline Value</span>
-                  <span className="text-xs font-mono font-bold text-slate-400">AED</span>
+              {/* Total Pipeline Value (Excl. VAT) */}
+              <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Pipeline Value</span>
+                    <span className="text-xs font-mono font-bold text-slate-400">AED</span>
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className="text-2xl font-bold text-slate-900 font-mono">
+                      {metrics.pendingPipelineValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
+                    <span className="font-semibold text-slate-700">Excl. VAT</span>
+                    <span>• Pending orders only</span>
+                  </div>
                 </div>
-                <div className="mt-2 flex items-baseline gap-1.5">
-                  <span className="text-2xl font-bold text-slate-900 font-mono">
-                    {metrics.pendingPipelineValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
-                  <span className="font-semibold text-slate-700">Excl. VAT</span>
-                  <span>• Pending orders only</span>
-                </div>
+
+                {/* Contribution by Salesman */}
+                {metrics.salesmanPendingBreakdown.length > 0 && (
+                  <div className="mt-3 pt-2.5 border-t border-slate-200/80">
+                    <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1.5 flex items-center gap-1">
+                      <UserCheck className="w-3 h-3 text-slate-400" />
+                      <span>Salesman Contribution:</span>
+                    </div>
+                    <div className="space-y-1 max-h-24 overflow-y-auto pr-0.5">
+                      {metrics.salesmanPendingBreakdown.map((s) => (
+                        <div key={s.name} className="flex items-center justify-between text-[11px] bg-white px-2 py-0.5 rounded border border-slate-200/60">
+                          <span className="font-medium text-slate-700 truncate max-w-[90px]">{s.name}</span>
+                          <span className="font-mono font-semibold text-slate-900">AED {s.amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Confirmed Jobs Value (Excl. VAT) */}
-              <div className="bg-emerald-50/60 border border-emerald-200/90 rounded-xl p-4 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Confirmed Jobs Value</span>
-                  <FileCheck className="w-4 h-4 text-emerald-600" />
+              <div className="bg-emerald-50/60 border border-emerald-200/90 rounded-xl p-4 shadow-2xs flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Confirmed Jobs Value</span>
+                    <FileCheck className="w-4 h-4 text-emerald-600" />
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className="text-2xl font-bold text-emerald-950 font-mono">
+                      {metrics.confirmedJobsValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-emerald-700 mt-1 flex items-center gap-1 font-medium">
+                    <span className="font-semibold text-emerald-900">Excl. VAT</span>
+                    <span>• In Production</span>
+                  </div>
                 </div>
-                <div className="mt-2 flex items-baseline gap-1.5">
-                  <span className="text-2xl font-bold text-emerald-950 font-mono">
-                    {metrics.confirmedJobsValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="text-[11px] text-emerald-700 mt-1 flex items-center gap-1 font-medium">
-                  <span className="font-semibold text-emerald-900">Excl. VAT</span>
-                  <span>• In Production</span>
-                </div>
+
+                {/* Contribution by Salesman */}
+                {metrics.salesmanConfirmedBreakdown.length > 0 && (
+                  <div className="mt-3 pt-2.5 border-t border-emerald-200">
+                    <div className="text-[10px] uppercase font-bold text-emerald-800 tracking-wider mb-1.5 flex items-center gap-1">
+                      <UserCheck className="w-3 h-3 text-emerald-600" />
+                      <span>Salesman Contribution:</span>
+                    </div>
+                    <div className="space-y-1 max-h-24 overflow-y-auto pr-0.5">
+                      {metrics.salesmanConfirmedBreakdown.map((s) => (
+                        <div key={s.name} className="flex items-center justify-between text-[11px] bg-white/90 px-2 py-0.5 rounded border border-emerald-200">
+                          <span className="font-medium text-emerald-900 truncate max-w-[90px]">{s.name}</span>
+                          <span className="font-mono font-bold text-emerald-950">AED {s.amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 shadow-2xs">
@@ -1074,13 +1232,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               >
                 {tabCounts.confirmedJobCardsCount}
               </span>
-              {tabCounts.confirmedJobCardsCount > 0 && (
-                <span className="hidden md:inline-flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
-                  <span>{tabCounts.runningJobCardsCount} Running</span>
-                  <span>•</span>
-                  <span>{tabCounts.completedJobCardsCount} Completed</span>
-                </span>
-              )}
             </button>
 
             {/* Tab 3: Users (ONLY VISIBLE TO ADMIN) */}
@@ -1265,27 +1416,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </div>
 
                   {/* Card 3: Final Total (Running + Completed) */}
-                  <div className="p-4 rounded-xl border bg-gradient-to-br from-slate-900 to-slate-800 text-white border-slate-700 shadow-sm relative overflow-hidden">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                        <Calculator className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Final Total (Running + Completed)</span>
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-700 text-slate-200 border border-slate-600">
-                        {jobCardsMetrics.finalCount} Total
-                      </span>
+                  <div className="p-4 rounded-xl border bg-gradient-to-br from-slate-900 to-slate-800 text-white border-slate-700 shadow-sm relative overflow-hidden flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                          <Calculator className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Final Total (Running + Completed)</span>
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-700 text-slate-200 border border-slate-600">
+                          {jobCardsMetrics.finalCount} Total
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl font-mono font-black text-amber-400 tracking-tight">
+                        AED {jobCardsMetrics.finalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-slate-300 mt-2 pt-2 border-t border-slate-700 font-medium">
+                        <span>{jobCardsMetrics.finalPcs.toLocaleString()} Pcs</span>
+                        <span>•</span>
+                        <span>{jobCardsMetrics.finalSqm.toFixed(1)} m² Total</span>
+                        <span className="ml-auto text-[10px] uppercase tracking-wider text-amber-300 font-bold">
+                          Grand Total
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-xl sm:text-2xl font-mono font-black text-amber-400 tracking-tight">
-                      AED {jobCardsMetrics.finalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-300 mt-2 pt-2 border-t border-slate-700 font-medium">
-                      <span>{jobCardsMetrics.finalPcs.toLocaleString()} Pcs</span>
-                      <span>•</span>
-                      <span>{jobCardsMetrics.finalSqm.toFixed(1)} m² Total</span>
-                      <span className="ml-auto text-[10px] uppercase tracking-wider text-amber-300 font-bold">
-                        Grand Total
-                      </span>
-                    </div>
+
+                    {/* Salesman Contribution Breakdown */}
+                    {jobCardsMetrics.salesmanBreakdown.length > 0 && (
+                      <div className="mt-3 pt-2.5 border-t border-slate-700/80">
+                        <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5 flex items-center gap-1">
+                          <UserCheck className="w-3 h-3 text-amber-400" />
+                          <span>Salesman Contribution:</span>
+                        </div>
+                        <div className="space-y-1 max-h-24 overflow-y-auto pr-0.5">
+                          {jobCardsMetrics.salesmanBreakdown.map((s) => (
+                            <div key={s.name} className="flex items-center justify-between text-[11px] bg-slate-800/90 px-2 py-0.5 rounded border border-slate-700">
+                              <span className="font-medium text-slate-200 truncate max-w-[90px]">{s.name}</span>
+                              <span className="font-mono font-bold text-amber-400">AED {s.amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1644,147 +1815,123 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </span>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+            <div className="overflow-x-auto p-2">
+              <table className="w-full text-left border-separate border-spacing-y-2 text-xs sm:text-sm">
                 <thead>
-                  <tr className="bg-slate-50/90 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-600 font-bold">
-                    <th className="py-3 px-3 text-center w-28">Invoiced</th>
-                    <th className="py-3 px-3 text-center w-28">Status</th>
-                    <th className="py-3 px-4 w-44">Job Card Ref</th>
-                    <th className="py-3 px-3 w-28">Date</th>
-                    <th className="py-3 px-4">Client & Project</th>
+                  <tr className="text-[11px] uppercase tracking-wider text-slate-500 font-bold">
+                    <th className="py-2 px-3 text-center w-28">Invoiced</th>
+                    <th className="py-2 px-4 min-w-[280px]">Job Card Ref & Client</th>
                     {jobCardsSubTab === 'running' && (
-                      <th className="py-3 px-4 w-52">Delivery Timeline</th>
+                      <th className="py-2 px-4 w-52">Delivery Timeline</th>
                     )}
-                    {jobCardsSubTab === 'running' && (
-                      <th className="py-3 px-4 min-w-[220px] max-w-[280px]">Factory Comments</th>
-                    )}
-                    <th className="py-3 px-4 w-40">Salesman Assigned</th>
-                    <th className="py-3 px-3 text-center w-24">Total Qty</th>
-                    <th className="py-3 px-3 text-center w-28">Glass Area</th>
-                    <th className="py-3 px-4 text-right w-36">Total Amount</th>
-                    <th className="py-3 px-3 text-center w-20">Excel</th>
+                    <th className="py-2 px-4 w-40">Salesman Assigned</th>
+                    <th className="py-2 px-3 text-center w-24">Total Qty</th>
+                    <th className="py-2 px-3 text-center w-28">Glass Area</th>
+                    <th className="py-2 px-4 text-right w-36">Total Amount</th>
+                    <th className="py-2 px-3 text-center w-20">Excel</th>
+                    <th className="py-2 px-4 min-w-[240px] max-w-[320px]">Factory Comments</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody>
                   {filteredQuotations.map((q) => {
                     const { grandTotalQty, grandTotalSqm, totalAmountAED } = calculateQuotationTotals(q);
                     const ref = q.from?.refNo || 'Pending Ref';
-                    const isCopied = copiedRef === ref;
                     const displayQty = typeof q.confirmedQty === 'number' ? q.confirmedQty : grandTotalQty;
                     const delivery = getDeliveryProgress(q);
                     const amt = typeof q.confirmedTotalAmount === 'number' && q.confirmedTotalAmount > 0
                       ? q.confirmedTotalAmount
                       : totalAmountAED;
 
-                    let rowClassName = 'transition-colors cursor-pointer group text-slate-800 ';
-                    if (q.isInvoiced) {
-                      rowClassName += 'bg-emerald-50/50 hover:bg-emerald-100/60 border-l-4 border-l-emerald-700';
+                    // Box styling classes
+                    const boxBase = q.isInvoiced
+                      ? 'bg-emerald-50/60 border-emerald-300 hover:bg-emerald-50 hover:border-emerald-400'
+                      : 'bg-white border-slate-200/90 hover:border-slate-300 hover:shadow-xs';
+
+                    // Check invoice permissions for this row
+                    const canToggleInvoice = !isEstimator && !isViewer && (isAdmin || (isProduction && !q.isInvoiced));
+                    let invoiceTooltip = '';
+                    if (isEstimator) {
+                      invoiceTooltip = 'Estimators cannot toggle Invoiced status (Admin & Production only)';
+                    } else if (isViewer) {
+                      invoiceTooltip = 'Viewers have read-only audit access';
+                    } else if (isProduction && q.isInvoiced) {
+                      invoiceTooltip = 'Production cannot uncheck an already invoiced job card (Admin only)';
+                    } else if (q.isInvoiced) {
+                      invoiceTooltip = 'Invoiced. Click to uncheck and move back to Running Jobs';
                     } else {
-                      rowClassName += 'bg-white hover:bg-blue-50/40 border-l-4 border-l-blue-600';
+                      invoiceTooltip = 'Click to mark as Invoiced (moves to Completed Jobs tab)';
                     }
 
                     return (
                       <tr
                         key={q.id}
                         onClick={() => onOpenQuotation(q, 'job_card')}
-                        className={rowClassName}
+                        className="cursor-pointer group text-slate-800 transition-all"
                       >
-                        {/* Invoiced Checkbox: Check to move to Completed, Uncheck to move to Running */}
-                        <td className="py-3 px-3 align-top text-center" onClick={(e) => e.stopPropagation()}>
+                        {/* Invoiced Checkbox: Left edge of box */}
+                        <td
+                          className={`py-3 px-3 align-middle text-center border-y border-l rounded-l-xl transition-colors ${boxBase}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <label
-                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold cursor-pointer select-none transition-all shadow-2xs ${
-                              q.isInvoiced
-                                ? 'bg-emerald-700 text-white border-emerald-800 hover:bg-emerald-800'
-                                : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50 hover:border-emerald-400 hover:text-emerald-900'
+                            onClick={(e) => {
+                              if (!canToggleInvoice) {
+                                e.preventDefault();
+                                handleToggleInvoiced(q.id);
+                              }
+                            }}
+                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold select-none transition-all shadow-2xs ${
+                              !canToggleInvoice
+                                ? 'opacity-60 cursor-not-allowed bg-slate-100 text-slate-500 border-slate-200'
+                                : q.isInvoiced
+                                ? 'bg-emerald-700 text-white border-emerald-800 hover:bg-emerald-800 cursor-pointer'
+                                : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50 hover:border-emerald-400 hover:text-emerald-900 cursor-pointer'
                             }`}
-                            title={
-                              q.isInvoiced
-                                ? 'Invoiced. Click to uncheck and move back to Running Jobs'
-                                : 'Click to mark as Invoiced (moves to Completed Jobs tab)'
-                            }
+                            title={invoiceTooltip}
                           >
                             <input
                               type="checkbox"
                               checked={Boolean(q.isInvoiced)}
-                              onChange={() => handleToggleInvoiced(q.id)}
-                              className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                              disabled={!canToggleInvoice}
+                              onChange={() => {
+                                if (canToggleInvoice) {
+                                  handleToggleInvoiced(q.id);
+                                }
+                              }}
+                              className={`w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 accent-emerald-600 ${
+                                canToggleInvoice ? 'cursor-pointer' : 'cursor-not-allowed'
+                              }`}
                             />
                             <span>Invoiced</span>
                           </label>
                         </td>
 
-                        {/* Status badge / Click to edit */}
-                        <td className="py-3 px-3 align-top text-center" onClick={(e) => e.stopPropagation()}>
-                          {isProduction ? (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs font-bold bg-emerald-100 border-emerald-300 text-emerald-950 shadow-2xs">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                              <span>Confirmed</span>
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenConfirmationModal(q)}
-                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs font-bold cursor-pointer transition-all bg-emerald-100 border-emerald-300 text-emerald-950 shadow-2xs hover:bg-emerald-200"
-                              title="Click to view confirmed order details or unconfirm back to quotes"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                              <span>Confirmed</span>
-                            </button>
-                          )}
-                        </td>
-
-                        {/* Job Card Ref */}
-                        <td className="py-3 px-4 align-top">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-700 text-white px-1.5 py-0.5 rounded font-mono">
+                        {/* Job Card Ref & Client: Cleaned up, no copy icon, no extra date clutter */}
+                        <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-700 text-white px-2 py-0.5 rounded font-mono shadow-2xs">
                               JC
                             </span>
-                            <span className="font-mono font-extrabold text-xs sm:text-sm px-2 py-0.5 rounded border text-emerald-950 bg-white border-emerald-300 shadow-2xs">
+                            <span className="font-mono font-extrabold text-sm px-2.5 py-0.5 rounded-md border text-emerald-950 bg-emerald-50/80 border-emerald-300 shadow-2xs">
                               {ref}
                             </span>
-                            <button
-                              type="button"
-                              onClick={(e) => handleCopyRef(ref, e)}
-                              className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-100 transition-colors"
-                              title="Copy Job Card Ref"
-                            >
-                              {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                            </button>
+                            <span className="text-[11px] text-slate-500 font-mono">
+                              ({q.from?.dated || new Date(q.createdAt).toLocaleDateString('en-GB')})
+                            </span>
                           </div>
-                          <div className="text-[11px] text-slate-500 font-mono mt-1">
-                            {q.from?.rev || 'REV-00'} • Confirmed {q.confirmedAt ? new Date(q.confirmedAt).toLocaleDateString('en-GB') : 'Ready'}
+
+                          {/* Client Information: Clean, bold, easy to read */}
+                          <div className="mt-1.5 flex items-center gap-1.5">
+                            <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="font-bold text-sm text-slate-900 leading-snug">
+                              {q.client?.name || <span className="text-slate-400 italic">No client name entered</span>}
+                            </span>
                           </div>
                         </td>
 
-                        {/* Date */}
-                        <td className="py-3 px-3 align-top text-slate-600 font-mono text-xs">
-                          {q.from?.dated || new Date(q.createdAt).toLocaleDateString('en-GB')}
-                        </td>
-
-                        {/* Client & Details */}
-                        <td className="py-3 px-4 align-top">
-                          <div className="font-bold text-sm text-slate-900">
-                            {q.client?.name || <span className="text-slate-400 italic">No client name entered</span>}
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-slate-500 mt-1 flex-wrap">
-                            {q.client?.emirate && (
-                              <span className="inline-flex items-center gap-1 text-[11px] bg-white px-1.5 py-0.2 rounded font-medium text-slate-600 border border-slate-200">
-                                <Building2 className="w-3 h-3 text-slate-400" />
-                                {q.client.emirate}
-                              </span>
-                            )}
-                            {q.client?.kindAttn && (
-                              <span className="text-[11px] text-slate-500">
-                                Attn: <span className="text-slate-700 font-medium">{q.client.kindAttn}</span>
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Delivery Timeline: ONLY in Running Jobs! */}
+                        {/* Delivery Timeline */}
                         {jobCardsSubTab === 'running' && (
-                          <td className="py-3 px-4 align-top" onClick={(e) => e.stopPropagation()}>
+                          <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`} onClick={(e) => e.stopPropagation()}>
                             <div className="space-y-1.5 min-w-[170px]">
                               <div className="flex items-center justify-between text-xs gap-1">
                                 <div className="flex items-center gap-1 font-bold text-slate-900 text-[11px]">
@@ -1796,7 +1943,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 </span>
                               </div>
 
-                              {/* Bar filling everyday, turns red as final day arrives */}
                               <div className="w-full bg-slate-200/90 rounded-full h-2 overflow-hidden shadow-inner">
                                 <div
                                   className={`h-full rounded-full transition-all duration-500 ${delivery.barColorClass}`}
@@ -1809,7 +1955,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 <span>
                                   {delivery.isFinalDay ? (
                                     <span className="text-red-700 font-bold flex items-center gap-0.5">
-                                      <Clock className="w-3 h-3 text-red-600 shrink-0 animate-pulse" />
+                                      <Clock className="w-3.5 h-3.5 text-red-600 shrink-0 animate-pulse" />
                                       Final Day
                                     </span>
                                   ) : (
@@ -1818,38 +1964,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 </span>
                                 <span className="font-semibold">{delivery.percent}%</span>
                               </div>
-
-                              {/* Quick edit delivery date link */}
-                              {!isProduction && (
-                                <div className="pt-0.5 text-right">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenConfirmationModal(q)}
-                                    className="text-[10px] text-emerald-800 hover:text-emerald-950 underline font-medium cursor-pointer"
-                                  >
-                                    Edit Date
-                                  </button>
-                                </div>
-                              )}
                             </div>
                           </td>
                         )}
 
-                        {/* Factory Comments: ONLY in Running Jobs! */}
-                        {jobCardsSubTab === 'running' && (
-                          <td className="py-3 px-4 align-top" onClick={(e) => e.stopPropagation()}>
-                            <FactoryCommentsCell
-                              quotation={q}
-                              onSaveComment={handleSaveComment}
-                            />
-                          </td>
-                        )}
-
                         {/* Salesman Assigned */}
-                        <td className="py-3 px-4 align-top">
+                        <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
                           {q.salesmanName ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs bg-amber-100 text-amber-950 border border-amber-300 px-2.5 py-1 rounded-lg font-bold shadow-2xs">
-                              <UserCheck className="w-3.5 h-3.5 text-amber-800 shrink-0" />
+                            <span className="inline-flex items-center gap-1.5 text-xs bg-amber-50 text-amber-900 border border-amber-300 px-2.5 py-1 rounded-lg font-bold shadow-2xs">
+                              <UserCheck className="w-3.5 h-3.5 text-amber-700 shrink-0" />
                               <span>{q.salesmanName}</span>
                             </span>
                           ) : (
@@ -1858,14 +1981,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </td>
 
                         {/* Quantity (Pcs) */}
-                        <td className="py-3 px-3 align-top text-center">
+                        <td className={`py-3 px-3 align-middle text-center border-y transition-colors ${boxBase}`}>
                           <div className="font-mono font-bold text-sm text-slate-900">
                             {displayQty.toLocaleString()} <span className="text-xs font-normal text-slate-500">Pcs</span>
                           </div>
                         </td>
 
                         {/* Total Glass Area */}
-                        <td className="py-3 px-3 align-top text-center">
+                        <td className={`py-3 px-3 align-middle text-center border-y transition-colors ${boxBase}`}>
                           <div className="font-mono font-bold text-xs sm:text-sm text-slate-900">
                             {grandTotalSqm.toFixed(2)} m²
                           </div>
@@ -1875,7 +1998,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </td>
 
                         {/* Total Amount (AED) */}
-                        <td className="py-3 px-4 align-top text-right">
+                        <td className={`py-3 px-4 align-middle text-right border-y transition-colors ${boxBase}`}>
                           <div className="font-mono font-bold text-sm text-slate-900">
                             AED {amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
@@ -1883,7 +2006,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </td>
 
                         {/* 1-Click Excel Optimizer Export */}
-                        <td className="py-3 px-3 align-top text-center" onClick={(e) => e.stopPropagation()}>
+                        <td className={`py-3 px-3 align-middle text-center border-y transition-colors ${boxBase}`} onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
                             onClick={() => {
@@ -1899,6 +2022,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           >
                             <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
                           </button>
+                        </td>
+
+                        {/* Factory Comments: Right edge of box */}
+                        <td className={`py-3 px-4 align-middle border-y border-r rounded-r-xl transition-colors ${boxBase}`} onClick={(e) => e.stopPropagation()}>
+                          <FactoryCommentsCell
+                            quotation={q}
+                            onSaveComment={handleSaveComment}
+                            readOnly={isViewer || jobCardsSubTab === 'completed'}
+                          />
                         </td>
                       </tr>
                     );
@@ -1924,41 +2056,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           /* ============================================================ */
           /* TAB 1: QUOTATIONS TABLE                                      */
           /* ============================================================ */
-          <div className="bg-white border border-slate-200 rounded-xl shadow-2xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+          <div className="bg-slate-50/50 border border-slate-200 rounded-xl shadow-2xs overflow-hidden">
+            <div className="overflow-x-auto p-2">
+              <table className="w-full text-left border-separate border-spacing-y-2 text-xs sm:text-sm">
                 <thead>
-                  <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
-                    <th className="py-3 px-3 text-center w-32">Confirmed</th>
-                    <th className="py-3 px-4 w-44">Quote Number</th>
-                    <th className="py-3 px-3 w-28">Date</th>
-                    <th className="py-3 px-4">Client & Details</th>
-                    <th className="py-3 px-3 text-center w-28">Glass Specs</th>
-                    <th className="py-3 px-4 text-right w-36">Total (AED)</th>
+                  <tr className="text-[11px] uppercase tracking-wider text-slate-500 font-bold">
+                    <th className="py-2 px-3 text-center w-32">Confirmed</th>
+                    <th className="py-2 px-4 w-44">Quote Number</th>
+                    <th className="py-2 px-3 w-28">Date</th>
+                    <th className="py-2 px-4">Client & Salesman</th>
+                    <th className="py-2 px-3 text-center w-28">Glass Specs</th>
+                    <th className="py-2 px-4 text-right w-36">Total (AED)</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody>
                   {filteredQuotations.map((q) => {
                     const { grandTotalQty, grandTotalSqm, totalWithVatAED } = calculateQuotationTotals(q);
                     const ref = q.from?.refNo || 'Pending Ref';
-                    const isCopied = copiedRef === ref;
                     const isCancelled = q.status === 'cancelled';
                     const isConfirmed = q.status === 'confirmed';
+
+                    const boxBase = isConfirmed
+                      ? 'bg-emerald-50/60 border-emerald-300 hover:bg-emerald-50 hover:border-emerald-400'
+                      : isCancelled
+                      ? 'bg-slate-100/75 border-slate-300 opacity-60'
+                      : 'bg-white border-slate-200/90 hover:border-slate-300 hover:shadow-xs';
 
                     return (
                       <tr
                         key={q.id}
                         onClick={() => onOpenQuotation(q, 'edit')}
-                        className={`transition-colors cursor-pointer group ${
-                          isConfirmed
-                            ? 'bg-emerald-50/70 hover:bg-emerald-100/50 border-l-4 border-l-emerald-600 text-slate-800'
-                            : isCancelled
-                            ? 'bg-slate-100/75 hover:bg-slate-200/50 opacity-65 text-slate-500 border-l-4 border-l-slate-400'
-                            : 'hover:bg-slate-50/70 border-l-4 border-l-transparent'
-                        }`}
+                        className="transition-all cursor-pointer group text-slate-800"
                       >
-                        {/* Confirmed Checkbox Column */}
-                        <td className="py-3 px-3 align-top text-center" onClick={(e) => e.stopPropagation()}>
+                        {/* Confirmed Checkbox Column: Left edge of box */}
+                        <td
+                          className={`py-3 px-3 align-middle text-center border-y border-l rounded-l-xl transition-colors ${boxBase}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1996,7 +2130,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </td>
 
                         {/* Quote Number Badge */}
-                        <td className="py-3 px-4 align-top">
+                        <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span
                               className={`font-mono font-bold text-xs sm:text-sm px-2 py-0.5 rounded border transition-colors ${
@@ -2009,28 +2143,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             >
                               {ref}
                             </span>
-                            {isConfirmed && (
-                              <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-600 text-white shadow-2xs flex items-center gap-1">
-                                <CheckCircle2 className="w-3 h-3" /> Confirmed
-                              </span>
-                            )}
                             {isCancelled && (
                               <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
                                 Cancelled
                               </span>
                             )}
-                            <button
-                              type="button"
-                              onClick={(e) => handleCopyRef(ref, e)}
-                              className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-100 transition-colors"
-                              title="Copy quote number"
-                            >
-                              {isCopied ? (
-                                <Check className="w-3.5 h-3.5 text-emerald-600" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
                           </div>
                           <div className="text-[11px] text-slate-400 font-mono mt-1">
                             {q.from?.rev || 'REV-00'}
@@ -2046,44 +2163,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </td>
 
                         {/* Date */}
-                        <td className="py-3 px-3 align-top text-slate-600 font-mono text-xs">
+                        <td className={`py-3 px-3 align-middle text-slate-600 font-mono text-xs border-y transition-colors ${boxBase}`}>
                           {q.from?.dated || new Date(q.createdAt).toLocaleDateString('en-GB')}
                         </td>
 
-                        {/* Client & Info */}
-                        <td className="py-3 px-4 align-top">
-                          <div className={`font-semibold text-sm ${isCancelled ? 'text-slate-600 line-through' : 'text-slate-900'}`}>
+                        {/* Client & Salesman */}
+                        <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
+                          <div className={`font-bold text-sm ${isCancelled ? 'text-slate-600 line-through' : 'text-slate-900'}`}>
                             {q.client?.name || <span className="text-slate-400 italic">No client name entered</span>}
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-slate-500 mt-1 flex-wrap">
-                            {/* Salesman Name Badge */}
-                            {q.salesmanName && (
+                          {q.salesmanName && (
+                            <div className="mt-1">
                               <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-900 border border-amber-300 px-2 py-0.5 rounded font-semibold shadow-2xs">
                                 <UserCheck className="w-3.5 h-3.5 text-amber-700" />
                                 Salesman: <strong>{q.salesmanName}</strong>
                               </span>
-                            )}
-                            {q.client?.emirate && (
-                              <span className="inline-flex items-center gap-1 text-[11px] bg-slate-100 px-1.5 py-0.2 rounded font-medium text-slate-600">
-                                <Building2 className="w-3 h-3 text-slate-400" />
-                                {q.client.emirate}
-                              </span>
-                            )}
-                            {q.client?.kindAttn && (
-                              <span className="text-[11px] text-slate-500">
-                                Attn: <span className="text-slate-700 font-medium">{q.client.kindAttn}</span>
-                              </span>
-                            )}
-                            {q.paymentTerms && (
-                              <span className="text-[10px] uppercase font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">
-                                {q.paymentTerms}
-                              </span>
-                            )}
-                          </div>
+                            </div>
+                          )}
                         </td>
 
                         {/* Glass Specs */}
-                        <td className="py-3 px-3 align-top text-center">
+                        <td className={`py-3 px-3 align-middle text-center border-y transition-colors ${boxBase}`}>
                           <div className="font-mono text-xs font-semibold text-slate-700">
                             {grandTotalSqm.toFixed(2)} m²
                           </div>
@@ -2092,8 +2192,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </div>
                         </td>
 
-                        {/* Total Amount AED */}
-                        <td className="py-3 px-4 align-top text-right">
+                        {/* Total Amount AED: Right edge of box */}
+                        <td className={`py-3 px-4 align-middle text-right border-y border-r rounded-r-xl transition-colors ${boxBase}`}>
                           <div className={`font-mono font-bold text-sm ${
                             isCancelled
                               ? 'text-slate-500 line-through'
@@ -2236,35 +2336,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <input
                       type="date"
                       value={committedDateInput}
+                      disabled={isViewer}
                       onChange={(e) => setCommittedDateInput(e.target.value)}
-                      className="flex-1 px-3 py-2 text-sm font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded-lg shadow-2xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-600 outline-none"
+                      className={`flex-1 px-3 py-2 text-sm font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded-lg shadow-2xs outline-none ${
+                        isViewer ? 'opacity-60 cursor-not-allowed bg-slate-100' : 'focus:ring-2 focus:ring-emerald-500 focus:border-emerald-600'
+                      }`}
                     />
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => adjustCommittedDate(-1)}
-                        className="px-2.5 py-2 text-xs font-bold bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 shadow-2xs transition-colors cursor-pointer"
-                        title="Reduce by 1 day"
-                      >
-                        -1d
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => adjustCommittedDate(1)}
-                        className="px-2.5 py-2 text-xs font-bold bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 shadow-2xs transition-colors cursor-pointer"
-                        title="Extend by 1 day"
-                      >
-                        +1d
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCommittedDateInput(getDefaultDeliveryDate(4))}
-                        className="px-2 py-2 text-[11px] font-semibold bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-600 shadow-2xs transition-colors cursor-pointer"
-                        title="Reset to 4th day from today"
-                      >
-                        Reset
-                      </button>
-                    </div>
+                    {!isViewer && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => adjustCommittedDate(-1)}
+                          className="px-2.5 py-2 text-xs font-bold bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 shadow-2xs transition-colors cursor-pointer"
+                          title="Reduce by 1 day"
+                        >
+                          -1d
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => adjustCommittedDate(1)}
+                          className="px-2.5 py-2 text-xs font-bold bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 shadow-2xs transition-colors cursor-pointer"
+                          title="Extend by 1 day"
+                        >
+                          +1d
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCommittedDateInput(getDefaultDeliveryDate(4))}
+                          className="px-2 py-2 text-[11px] font-semibold bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-600 shadow-2xs transition-colors cursor-pointer"
+                          title="Reset to 4th day from today"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-600 bg-white/80 px-2.5 py-1.5 rounded-md border border-slate-200">
@@ -2276,7 +2381,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </span>
                   </div>
 
-                  {isAlreadyConfirmed && (
+                  {isAlreadyConfirmed && !isViewer && (
                     <div className="pt-1 flex justify-end">
                       <button
                         type="button"
@@ -2349,7 +2454,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {/* Modal Actions */}
               <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between gap-3 flex-wrap">
                 <div>
-                  {isAlreadyConfirmed && (
+                  {isViewer ? (
+                    <div className="flex items-center gap-1.5 text-xs text-purple-800 bg-purple-50 px-3 py-1.5 rounded-lg border border-purple-200">
+                      <Lock className="w-3.5 h-3.5 text-purple-600" />
+                      <span>Viewer Audit Mode (Read Only)</span>
+                    </div>
+                  ) : isAlreadyConfirmed ? (
                     isAdmin ? (
                       <button
                         type="button"
@@ -2366,7 +2476,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span>Unconfirming restricted to ADMIN (HOD)</span>
                       </div>
                     )
-                  )}
+                  ) : null}
                 </div>
 
                 <div className="flex items-center gap-2 ml-auto">
@@ -2377,7 +2487,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   >
                     {isAlreadyConfirmed ? 'Close' : 'Cancel'}
                   </button>
-                  {!isAlreadyConfirmed && (
+                  {!isAlreadyConfirmed && !isViewer && (
                     <button
                       type="button"
                       onClick={handleConfirmOrderSubmit}

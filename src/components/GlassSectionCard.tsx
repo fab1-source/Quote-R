@@ -166,11 +166,12 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
 
   return (
     <div
-      className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden transition"
+      id={`section-${section.id}`}
+      className="bg-white border-2 border-slate-300 rounded-xl shadow-xs overflow-hidden transition mb-6"
       onPaste={handleDirectPaste}
     >
-      {/* Section Header Bar */}
-      <div className="bg-slate-50 px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+      {/* Section Header Bar: Subtle warm amber color for Glass Description */}
+      <div className="bg-amber-50/70 px-5 py-3.5 border-b border-amber-200/90 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3 flex-1 min-w-[280px]">
           {/* Section Code Badge */}
           <input
@@ -178,7 +179,7 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
             disabled={readOnly}
             value={section.sectionCode}
             onChange={(e) => onUpdateSection({ ...section, sectionCode: e.target.value })}
-            className="w-24 text-center font-bold text-xs bg-blue-100 text-blue-700 disabled:bg-slate-100 disabled:text-slate-600 disabled:cursor-not-allowed border border-blue-200/80 disabled:border-slate-200 rounded-md py-1.5 px-2 uppercase tracking-wide focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            className="w-24 text-center font-bold text-xs bg-amber-100 text-amber-900 disabled:bg-slate-100 disabled:text-slate-600 disabled:cursor-not-allowed border border-amber-300/80 disabled:border-slate-200 rounded-md py-1.5 px-2 uppercase tracking-wide focus:outline-none focus:ring-2 focus:ring-amber-500/20"
             title="Section identifier (e.g. Glass -01)"
           />
 
@@ -190,14 +191,14 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
               value={section.description}
               onChange={(e) => onUpdateSection({ ...section, description: e.target.value })}
               placeholder="e.g. Supply of 4mm Clear glass Annealed only"
-              className="w-full text-xs font-semibold text-slate-800 bg-white disabled:bg-slate-50 disabled:text-slate-600 disabled:cursor-not-allowed border border-slate-200 rounded-md py-1.5 px-3 pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors"
+              className="w-full text-xs font-semibold text-slate-800 bg-white disabled:bg-slate-50 disabled:text-slate-600 disabled:cursor-not-allowed border border-amber-300/90 rounded-md py-1.5 px-3 pr-8 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600 transition-colors"
             />
             {/* Presets dropdown toggle */}
             {!readOnly && (
               <button
                 type="button"
                 onClick={() => setShowPresets(!showPresets)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-blue-600 rounded cursor-pointer"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-amber-700/60 hover:text-amber-900 rounded cursor-pointer"
                 title="Common glass descriptions"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -217,7 +218,7 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
                       onUpdateSection({ ...section, description: preset });
                       setShowPresets(false);
                     }}
-                    className="w-full text-left px-2.5 py-1.5 hover:bg-blue-50 rounded text-slate-700 hover:text-blue-700 transition line-clamp-1 cursor-pointer"
+                    className="w-full text-left px-2.5 py-1.5 hover:bg-amber-50 rounded text-slate-700 hover:text-amber-900 transition line-clamp-1 cursor-pointer"
                   >
                     {preset}
                   </button>
@@ -233,8 +234,8 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
               onClick={() => setShowBuilder(!showBuilder)}
               className={`px-2.5 py-1.5 text-xs font-semibold rounded-md border flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
                 showBuilder
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
-                  : 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50'
+                  ? 'bg-amber-700 text-white border-amber-700 shadow-2xs'
+                  : 'bg-white text-amber-900 border-amber-300 hover:bg-amber-100/60'
               }`}
               title="Toggle Glass Description Builder"
             >
@@ -470,42 +471,42 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
             </div>
           ) : (
             <>
-              <table className="w-full text-xs text-left border-collapse">
-              <thead className="sticky top-0 bg-white border-b border-slate-200">
-                <tr className="text-[10px] uppercase text-slate-500 font-bold">
-                  <th className="py-2.5 px-4 w-16 text-center">S.No</th>
-                  <th className="py-2.5 px-4 w-28">Code</th>
-                  <th className="py-2.5 px-4 w-24 text-right">Qty</th>
-                  <th className="py-2.5 px-4 w-28 text-right">Width (mm)</th>
-                  <th className="py-2.5 px-4 w-28 text-right">Height (mm)</th>
-                  <th className="py-2.5 px-4 w-28 text-right">Per Sqm</th>
-                  <th className="py-2.5 px-4 w-32 text-right">Area (sqm)</th>
-                  <th className="py-2.5 px-2 w-10 text-center"></th>
+              <table className="w-full text-xs text-left border-collapse border border-slate-300">
+              <thead className="sticky top-0 bg-sky-50/90 border-b border-sky-200 text-sky-950">
+                <tr className="text-[11px] uppercase font-bold tracking-wider">
+                  <th className="border border-sky-200/90 py-2 px-3 w-14 text-center">S.No</th>
+                  <th className="border border-sky-200/90 py-2 px-3 w-28 text-left">Code</th>
+                  <th className="border border-sky-200/90 py-2 px-3 w-20 text-right">Qty</th>
+                  <th className="border border-sky-200/90 py-2 px-3 w-28 text-right">Width (mm)</th>
+                  <th className="border border-sky-200/90 py-2 px-3 w-28 text-right">Height (mm)</th>
+                  <th className="border border-sky-200/90 py-2 px-3 w-24 text-right">Per Sqm</th>
+                  <th className="border border-sky-200/90 py-2 px-3 w-28 text-right">Area (sqm)</th>
+                  <th className="border border-sky-200/90 py-2 px-2 w-8 text-center"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="bg-white">
                 {section.items.map((item) => (
-                  <tr key={item.id} className="hover:bg-blue-50/50 transition-colors group">
-                    <td className="py-1.5 px-4 text-center text-slate-400 font-mono text-xs">
+                  <tr key={item.id} className="hover:bg-sky-50/30 transition-colors group">
+                    <td className="border border-slate-200 p-1 text-center bg-white">
                       <input
                         type="text"
                         disabled={readOnly}
                         value={item.sNo}
                         onChange={(e) => handleUpdateItem(item.id, 'sNo', e.target.value)}
-                        className="w-10 text-center font-mono text-xs border border-transparent hover:border-slate-200 disabled:hover:border-transparent focus:border-blue-500 disabled:cursor-not-allowed rounded py-0.5 bg-transparent focus:bg-white"
+                        className="w-full text-center font-mono text-xs py-1 px-1 bg-white border border-slate-200 hover:border-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-500 rounded-none disabled:bg-slate-50 disabled:text-slate-500"
                       />
                     </td>
-                    <td className="py-1.5 px-4">
+                    <td className="border border-slate-200 p-1 bg-white">
                       <input
                         type="text"
                         disabled={readOnly}
                         value={item.code}
-                        placeholder="e.g. WD-C-04"
+                        placeholder="Code"
                         onChange={(e) => handleUpdateItem(item.id, 'code', e.target.value)}
-                        className="w-full font-mono text-xs border border-transparent hover:border-slate-200 disabled:hover:border-transparent focus:border-blue-500 disabled:cursor-not-allowed rounded py-0.5 px-1 bg-transparent focus:bg-white"
+                        className="w-full font-mono text-xs py-1 px-2 bg-white border border-slate-200 hover:border-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-500 rounded-none disabled:bg-slate-50 disabled:text-slate-700"
                       />
                     </td>
-                    <td className="py-1.5 px-4 text-right font-semibold">
+                    <td className="border border-slate-200 p-1 bg-white">
                       <input
                         type="number"
                         min="1"
@@ -515,10 +516,10 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
                         onChange={(e) =>
                           handleUpdateItem(item.id, 'qty', parseInt(e.target.value, 10) || 0)
                         }
-                        className="w-16 text-right font-medium text-xs border border-transparent hover:border-slate-200 disabled:hover:border-transparent focus:border-blue-500 disabled:cursor-not-allowed rounded py-0.5 px-1 bg-transparent focus:bg-white"
+                        className="w-full text-right font-mono font-medium text-xs py-1 px-2 bg-white border border-slate-200 hover:border-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-500 rounded-none disabled:bg-slate-50 disabled:text-slate-800"
                       />
                     </td>
-                    <td className="py-1.5 px-4 text-right">
+                    <td className="border border-slate-200 p-1 bg-white">
                       <input
                         type="number"
                         min="1"
@@ -528,10 +529,10 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
                         onChange={(e) =>
                           handleUpdateItem(item.id, 'width', parseFloat(e.target.value) || 0)
                         }
-                        className="w-20 text-right text-xs border border-transparent hover:border-slate-200 disabled:hover:border-transparent focus:border-blue-500 disabled:cursor-not-allowed rounded py-0.5 px-1 bg-transparent focus:bg-white"
+                        className="w-full text-right font-mono font-semibold text-xs py-1 px-2 bg-white border-2 border-slate-300 hover:border-blue-500 focus:border-blue-600 focus:ring-1 focus:ring-blue-500 rounded-none shadow-2xs disabled:bg-slate-50 disabled:border-slate-200 disabled:text-slate-800"
                       />
                     </td>
-                    <td className="py-1.5 px-4 text-right">
+                    <td className="border border-slate-200 p-1 bg-white">
                       <input
                         type="number"
                         min="1"
@@ -541,16 +542,16 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
                         onChange={(e) =>
                           handleUpdateItem(item.id, 'height', parseFloat(e.target.value) || 0)
                         }
-                        className="w-20 text-right text-xs border border-transparent hover:border-slate-200 disabled:hover:border-transparent focus:border-blue-500 disabled:cursor-not-allowed rounded py-0.5 px-1 bg-transparent focus:bg-white"
+                        className="w-full text-right font-mono font-semibold text-xs py-1 px-2 bg-white border-2 border-slate-300 hover:border-blue-500 focus:border-blue-600 focus:ring-1 focus:ring-blue-500 rounded-none shadow-2xs disabled:bg-slate-50 disabled:border-slate-200 disabled:text-slate-800"
                       />
                     </td>
-                    <td className="py-1.5 px-4 text-right text-slate-500 font-mono text-xs">
+                    <td className="border border-slate-200 py-1.5 px-3 text-right text-slate-600 font-mono text-xs bg-slate-50/50">
                       {item.perSqm > 0 ? item.perSqm.toFixed(2) : '-'}
                     </td>
-                    <td className="py-1.5 px-4 text-right font-semibold text-slate-800 font-mono text-xs">
+                    <td className="border border-slate-200 py-1.5 px-3 text-right font-bold text-slate-900 font-mono text-xs bg-slate-50/50">
                       {item.totalSqm > 0 ? item.totalSqm.toFixed(2) : '-'}
                     </td>
-                    <td className="py-1.5 px-2 text-center">
+                    <td className="border border-slate-200 p-1 text-center bg-white">
                       {!readOnly && (
                         <button
                           type="button"
@@ -566,21 +567,21 @@ export const GlassSectionCard: React.FC<GlassSectionCardProps> = ({
                 ))}
               </tbody>
               {/* Section Subtotal Footer Row */}
-              <tfoot className="bg-slate-50 font-semibold text-xs border-t border-slate-200">
+              <tfoot className="bg-slate-100 font-semibold text-xs">
                 <tr>
-                  <td colSpan={2} className="py-2.5 px-4 text-center uppercase tracking-wide text-slate-600">
+                  <td colSpan={2} className="border border-slate-300 py-2 px-3 text-center uppercase tracking-wide text-slate-700 font-bold">
                     TOTAL ({section.sectionCode})
                   </td>
-                  <td className="py-2.5 px-4 text-right font-bold text-slate-900 font-mono">
+                  <td className="border border-slate-300 py-2 px-3 text-right font-bold text-slate-900 font-mono">
                     {totalQty.toLocaleString()}
                   </td>
-                  <td colSpan={3} className="py-2.5 px-4 text-right text-slate-500">
+                  <td colSpan={3} className="border border-slate-300 py-2 px-3 text-right text-slate-600 font-medium">
                     Total Sqm:
                   </td>
-                  <td className="py-2.5 px-4 text-right font-bold text-slate-900 font-mono">
+                  <td className="border border-slate-300 py-2 px-3 text-right font-bold text-slate-900 font-mono">
                     {totalSqm.toLocaleString()}
                   </td>
-                  <td className="py-2.5 px-2 text-center">
+                  <td className="border border-slate-300 py-2 px-2 text-center">
                     {!readOnly && section.items.length > 0 && (
                       <button
                         type="button"

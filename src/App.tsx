@@ -12,6 +12,7 @@ import {
   Calculator,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   FileSpreadsheet,
   ClipboardList,
   Lock,
@@ -80,17 +81,21 @@ export default function App() {
   const [activePasteSection, setActivePasteSection] = useState<GlassSection | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [notification, setNotification] = useState<{
-    type: 'success' | 'info' | 'error';
+    type: 'success' | 'info' | 'error' | 'warning';
     message: string;
   } | null>(null);
 
-  const showNotification = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
+  const showNotification = (message: string, type: 'success' | 'info' | 'error' | 'warning' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 4000);
   };
 
   // Sync quotation changes into local storage automatically
   const updateQuotationAndStorage = (updater: (prev: Quotation) => Quotation) => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Read-only mode: Modifications are disabled for viewers.', 'warning');
+      return;
+    }
     setQuotation((prev) => {
       const updated = updater(prev);
       const updatedList = saveQuotation(updated);
@@ -105,6 +110,10 @@ export default function App() {
 
   // DASHBOARD ACTION: Add New Quotation with format IGC/{YY}/{MM}/{SERIAL}
   const handleAddNewQuotation = () => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Access restricted: Viewers cannot create new quotations.', 'warning');
+      return;
+    }
     const newQuote = createNewQuotationWithNextRef(new Date());
     const updatedList = saveQuotation(newQuote);
     setQuotations(updatedList);
@@ -148,6 +157,10 @@ export default function App() {
 
   // DASHBOARD ACTION: Duplicate quote with next serial
   const handleDuplicateQuotation = (id: string) => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Access restricted: Viewers cannot duplicate quotations.', 'warning');
+      return;
+    }
     const { newQuotation, allQuotes } = duplicateQuotation(id);
     setQuotations(allQuotes);
     showNotification(`Duplicated as ${newQuotation.from.refNo}`, 'success');
@@ -155,6 +168,10 @@ export default function App() {
 
   // DASHBOARD ACTION: Cancel quote
   const handleCancelQuotation = (id: string, reason: string) => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Access restricted: Viewers cannot cancel quotations.', 'warning');
+      return;
+    }
     const target = quotations.find((q) => q.id === id);
     const ref = target?.from?.refNo || 'this quotation';
     const updated = cancelQuotation(id, reason);
@@ -170,6 +187,10 @@ export default function App() {
 
   // DASHBOARD ACTION: Confirm quote
   const handleConfirmQuotation = (id: string, details: ConfirmationDetails) => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Access restricted: Viewers cannot confirm quotations.', 'warning');
+      return;
+    }
     const target = quotations.find((q) => q.id === id);
     const ref = target?.from?.refNo || 'this quotation';
     const updated = confirmQuotation(id, details);
@@ -185,6 +206,10 @@ export default function App() {
 
   // DASHBOARD ACTION: Unconfirm quote
   const handleUnconfirmQuotation = (id: string) => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Access restricted: Viewers cannot unconfirm quotations.', 'warning');
+      return;
+    }
     const target = quotations.find((q) => q.id === id);
     const ref = target?.from?.refNo || 'this quotation';
     const updated = unconfirmQuotation(id);
@@ -208,6 +233,10 @@ export default function App() {
       factoryComments?: string;
     }
   ) => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Access restricted: Viewers cannot modify job cards.', 'warning');
+      return;
+    }
     const updated = updateJobCardFlags(id, updates);
     setQuotations(updated);
     if (quotation.id === id) {
@@ -220,6 +249,10 @@ export default function App() {
 
   // Load sample quotation template
   const handleLoadSample = () => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Access restricted: Viewers cannot load sample quotations.', 'warning');
+      return;
+    }
     const sample = createSampleQuotation();
     sample.id = `sample-quote-${Date.now()}`;
     // Assign proper sequential ref
@@ -244,6 +277,10 @@ export default function App() {
 
   // Import JSON Backup
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Access restricted: Viewers cannot import data.', 'warning');
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -369,6 +406,10 @@ export default function App() {
 
   // Save current quotation to dashboard
   const handleSaveCurrentQuote = () => {
+    if (currentUser?.role === 'VIEWER') {
+      showNotification('Read-only mode: Viewers cannot save modifications.', 'warning');
+      return;
+    }
     const updated = saveQuotation(quotation);
     setQuotations(updated);
     showNotification(`Saved ${quotation.from.refNo} to Dashboard!`, 'success');
@@ -408,6 +449,7 @@ export default function App() {
 
   const isProductionUser = currentUser.role === 'PRODUCTION';
   const isAdminUser = currentUser.role === 'ADMIN';
+  const isViewerUser = currentUser.role === 'VIEWER';
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans">
@@ -417,6 +459,8 @@ export default function App() {
           className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg border text-sm font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200 ${
             notification.type === 'error'
               ? 'bg-red-50 text-red-900 border-red-200'
+              : notification.type === 'warning'
+              ? 'bg-amber-50 text-amber-900 border-amber-200'
               : notification.type === 'info'
               ? 'bg-blue-50 text-blue-900 border-blue-200'
               : 'bg-emerald-50 text-emerald-900 border-emerald-200'
@@ -424,6 +468,8 @@ export default function App() {
         >
           {notification.type === 'error' ? (
             <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+          ) : notification.type === 'warning' ? (
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
           ) : (
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
           )}
@@ -450,7 +496,7 @@ export default function App() {
           onUpdateJobCardFlags={handleUpdateJobCardFlags}
         />
       ) : (() => {
-        const isLocked = quotation.status === 'cancelled' || quotation.status === 'confirmed';
+        const isLocked = quotation.status === 'cancelled' || quotation.status === 'confirmed' || isViewerUser;
 
         return (
           /* VIEW 2: QUOTATION PORTAL (BUILDER & DOCUMENT PREVIEW) */
@@ -470,13 +516,13 @@ export default function App() {
               onOpenHistory={() => setIsHistoryOpen(true)}
               onBackToDashboard={() => {
                 // Ensure current changes are saved and return to dashboard
-                if (!isLocked && !isProductionUser) {
+                if (!isLocked && !isProductionUser && !isViewerUser) {
                   saveQuotation(quotation);
                 }
                 setQuotations(getSavedQuotations());
                 setViewMode('dashboard');
               }}
-              onSaveCurrentQuote={!isLocked && !isProductionUser ? handleSaveCurrentQuote : undefined}
+              onSaveCurrentQuote={!isLocked && !isProductionUser && !isViewerUser ? handleSaveCurrentQuote : undefined}
               glassSectionCount={quotation.glassSections.length}
               currentRefNo={quotation.from?.refNo}
               clientName={quotation.client?.name}
@@ -486,6 +532,7 @@ export default function App() {
               salesmanName={quotation.salesmanName}
               currentUser={currentUser}
               onLogout={handleLogout}
+              onUnconfirmQuotation={isAdminUser && quotation.status === 'confirmed' ? () => handleUnconfirmQuotation(quotation.id) : undefined}
             />
 
             {/* Main Content Area */}
@@ -528,164 +575,18 @@ export default function App() {
                 </div>
               ) : (
                 <>
-                  {/* Primary Tabs: 1st Tab is Quotations Portal, 2nd Tab is COST SHEET */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 mb-6 gap-3">
-                    <div className="flex items-center gap-2 sm:gap-4">
-                      {/* Tab 1: Quotations Portal */}
-                      <button
-                        type="button"
-                        onClick={() => setPortalTab('quotations')}
-                        className={`pb-3 px-3 sm:px-4 text-sm sm:text-base font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
-                          portalTab === 'quotations'
-                            ? 'border-[#7B1818] text-[#7B1818]'
-                            : 'border-transparent text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-[#7B1818]" />
-                        <span>Quotations Portal</span>
-                      </button>
-
-                      {/* Tab 2: COST SHEET Tab */}
-                      <button
-                        type="button"
-                        onClick={() => setPortalTab('cost_sheet')}
-                        className={`pb-3 px-3 sm:px-4 text-sm sm:text-base font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
-                          portalTab === 'cost_sheet'
-                            ? 'border-indigo-600 text-indigo-900 bg-indigo-50/60 rounded-t-lg'
-                            : 'border-transparent text-slate-500 hover:text-indigo-700'
-                        }`}
-                      >
-                        <Calculator className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" />
-                        <span>COST SHEET</span>
-                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
-                          Costing & Margins
-                        </span>
-                      </button>
-                    </div>
-
-                    {/* Sub-view switcher for Quotations Portal */}
-                    {portalTab === 'quotations' && (
-                      <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs mb-2 sm:mb-0">
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('edit')}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                            activeTab === 'edit'
-                              ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          <Edit3 className="w-3.5 h-3.5 text-blue-600" />
-                          <span>{isLocked ? 'Specs (Locked)' : 'Form & Builder'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('preview')}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                            activeTab === 'preview'
-                              ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          <Eye className="w-3.5 h-3.5 text-slate-500" />
-                          <span>Quotation Preview</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('job_card')}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                            activeTab === 'job_card'
-                              ? 'bg-white text-emerald-800 shadow-xs font-bold'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                          title="Factory Job Card without amounts or terms"
-                        >
-                          <ClipboardList className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Job Card</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-              {/* 2nd Tab: COST SHEET View */}
-              {portalTab === 'cost_sheet' ? (
-                <CostSheetView
-                  quotation={quotation}
-                  isLocked={isLocked}
-                  onBackToQuotation={() => setPortalTab('quotations')}
-                />
-              ) : (
-                /* 1st Tab: Quotations Portal */
-                <>
-                  {/* Confirmed / Locked Alert Banner */}
-                  {quotation.status === 'confirmed' && (
-                    <div className="mb-6 p-4 bg-emerald-50 border border-emerald-300 rounded-xl shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-emerald-950">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-emerald-100 text-emerald-800 rounded-lg border border-emerald-300 shrink-0">
-                          <Lock className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm">This Quotation is Confirmed</span>
-                            <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-600 text-white shadow-2xs">
-                              Locked for Editing
-                            </span>
-                          </div>
-                          <p className="text-xs text-emerald-800 mt-0.5">
-                            Assigned to salesman:{' '}
-                            <strong>{quotation.salesmanName || 'Not Assigned'}</strong> • All specifications, rates, and totals are locked in read-only mode.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => setPortalTab('cost_sheet')}
-                          className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg transition-colors cursor-pointer shadow-2xs flex items-center gap-1.5"
-                          title="Open Cost Sheet for this quotation"
-                        >
-                          <Calculator className="w-3.5 h-3.5" />
-                          <span>View Cost Sheet</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('job_card')}
-                          className="px-3.5 py-1.5 text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg transition-colors cursor-pointer shadow-2xs flex items-center gap-1.5"
-                          title="View production Job Card without amounts or terms"
-                        >
-                          <ClipboardList className="w-3.5 h-3.5" />
-                          <span>View Job Card</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setQuotations(getSavedQuotations());
-                            setViewMode('dashboard');
-                          }}
-                          className="px-3.5 py-1.5 text-xs font-semibold bg-white hover:bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg transition-colors cursor-pointer"
-                        >
-                          Back to Dashboard
-                        </button>
-                        {isAdminUser ? (
-                          <button
-                            type="button"
-                            onClick={() => handleUnconfirmQuotation(quotation.id)}
-                            className="px-3.5 py-1.5 text-xs font-semibold bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-lg transition-colors cursor-pointer"
-                            title="Unconfirm order and unlock editing"
-                          >
-                            Unlock Editing
-                          </button>
-                        ) : (
-                          <span className="text-[11px] text-slate-500 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200">
-                            Unconfirming restricted to ADMIN (HOD)
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-              {activeTab === 'edit' ? (
-                <div className="space-y-6">
+                  {/* 2nd Tab: COST SHEET View */}
+                  {portalTab === 'cost_sheet' ? (
+                    <CostSheetView
+                      quotation={quotation}
+                      isLocked={isLocked}
+                      onBackToQuotation={() => setPortalTab('quotations')}
+                    />
+                  ) : (
+                    /* 1st Tab: Quotations Portal */
+                    <>
+                      {activeTab === 'edit' ? (
+                        <div className="space-y-6">
                   {/* Header: Client TO & Interglass FROM info */}
                   <CompanyAndClientCard
                     quotation={quotation}

@@ -131,7 +131,7 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
       onNotification('Cannot delete your own account', 'error');
       return;
     }
-    if (['HOD', 'ESTIMATOR1', 'FACTORY1'].includes(targetUser.username.toUpperCase())) {
+    if (['HOD', 'ESTIMATOR1', 'FACTORY1', 'AUDIT1'].includes(targetUser.username.toUpperCase())) {
       const proceed = window.confirm(
         `"${targetUser.username}" is a default system user. Are you sure you want to delete this user?`
       );
@@ -217,8 +217,8 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
         </button>
       </div>
 
-      {/* 3 Access Control Levels Guide */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* 4 Access Control Levels Guide */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* ADMIN */}
         <div className="bg-red-50/70 border border-red-200 rounded-xl p-4 text-xs">
           <div className="flex items-center justify-between mb-2">
@@ -230,7 +230,8 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
           <p className="text-red-900 font-medium leading-relaxed">
             • Complete access to all portal features.<br />
             • Can <strong>confirm</strong> AND <strong>unconfirm</strong> orders.<br />
-            • Has exclusive access to the <strong>"Users"</strong> tab to manage accounts and passwords.
+            • Can toggle Invoiced status (check & uncheck).<br />
+            • Exclusive access to <strong>"Users"</strong> tab to manage accounts and passwords.
           </p>
         </div>
 
@@ -245,7 +246,8 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
           <p className="text-blue-900 font-medium leading-relaxed">
             • Access to Quotations Portal, Cost Sheet, and Job Cards.<br />
             • Can <strong>confirm</strong> an order.<br />
-            • <strong>Cannot un-confirm</strong> orders (locked once confirmed).<br />
+            • <strong>Cannot un-confirm</strong> orders.<br />
+            • <strong>Cannot toggle Invoiced</strong>.<br />
             • "Users" tab is hidden.
           </p>
         </div>
@@ -259,10 +261,26 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
             <span className="font-bold text-emerald-900">Job Cards Only</span>
           </div>
           <p className="text-emerald-900 font-medium leading-relaxed">
-            • <strong>Can ONLY access JOB CARDS tab</strong>.<br />
-            • No other tabs (Quotations, Cost Sheet, Users) are visible.<br />
-            • Zero access to financial amounts or commercial terms.<br />
-            • Pure factory production view.
+            • <strong>Strictly JOB CARDS tab only</strong>.<br />
+            • No access to financial amounts or commercial terms.<br />
+            • Can mark as <strong>Invoiced</strong>.<br />
+            • <strong>Cannot uncheck Invoiced</strong> once marked.
+          </p>
+        </div>
+
+        {/* VIEWER */}
+        <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-4 text-xs">
+          <div className="flex items-center justify-between mb-2">
+            <span className="px-2 py-0.5 rounded bg-purple-700 text-white font-bold text-[10px] tracking-wider uppercase">
+              VIEWER Level
+            </span>
+            <span className="font-bold text-purple-900">Read-Only Audit</span>
+          </div>
+          <p className="text-purple-900 font-medium leading-relaxed">
+            • Can view and open quotations and job cards.<br />
+            • <strong>Strictly read-only mode</strong> throughout the portal.<br />
+            • Cannot edit, create, confirm, or modify anything.<br />
+            • "Users" tab is hidden.
           </p>
         </div>
       </div>
@@ -318,7 +336,9 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
                               ? 'bg-red-100 text-red-800 border border-red-300'
                               : user.role === 'ESTIMATION'
                               ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                              : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : user.role === 'PRODUCTION'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : 'bg-purple-100 text-purple-800 border border-purple-300'
                           }`}
                         >
                           {user.username.substring(0, 2).toUpperCase()}
@@ -350,20 +370,25 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
                               ? 'bg-red-50 text-red-800 border-red-300'
                               : user.role === 'ESTIMATION'
                               ? 'bg-blue-50 text-blue-800 border-blue-300'
-                              : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                              : user.role === 'PRODUCTION'
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                              : 'bg-purple-50 text-purple-800 border-purple-300'
                           }`}
                         >
                           <option value="ADMIN">ADMIN</option>
                           <option value="ESTIMATION">ESTIMATION</option>
                           <option value="PRODUCTION">PRODUCTION</option>
+                          <option value="VIEWER">VIEWER</option>
                         </select>
                       </div>
                       <div className="text-[10px] text-slate-500 mt-1">
                         {user.role === 'ADMIN'
-                          ? 'Can confirm & unconfirm + Users tab'
+                          ? 'Can confirm & unconfirm + toggle invoice + Users tab'
                           : user.role === 'ESTIMATION'
-                          ? 'Can confirm, cannot unconfirm'
-                          : 'Job Cards tab only'}
+                          ? 'Can confirm, cannot unconfirm, cannot invoice'
+                          : user.role === 'PRODUCTION'
+                          ? 'Job Cards only • Can invoice, cannot uncheck'
+                          : 'Read-only audit view of quotations & job cards'}
                       </div>
                     </td>
 
@@ -640,7 +665,36 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
                         <span>Job Cards Only</span>
                       </div>
                       <div className="text-slate-500 text-[11px] mt-0.5">
-                        Strictly Job Cards tab only. No access to quotations, pricing, cost sheets, or user management.
+                        Strictly Job Cards tab only. Can mark invoiced (cannot uncheck). No access to pricing, cost sheets, or users.
+                      </div>
+                    </div>
+                  </label>
+
+                  {/* VIEWER */}
+                  <label
+                    className={`p-3 rounded-lg border cursor-pointer transition flex items-start gap-3 ${
+                      newRole === 'VIEWER'
+                        ? 'bg-purple-50/80 border-purple-400 ring-1 ring-purple-400'
+                        : 'bg-slate-50 hover:bg-slate-100/70 border-slate-200'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="userRole"
+                      value="VIEWER"
+                      checked={newRole === 'VIEWER'}
+                      onChange={() => setNewRole('VIEWER')}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                        <span className="px-1.5 py-0.5 rounded bg-purple-700 text-white text-[10px] font-bold uppercase">
+                          VIEWER
+                        </span>
+                        <span>Read-Only Audit & Viewer</span>
+                      </div>
+                      <div className="text-slate-500 text-[11px] mt-0.5">
+                        Can view and open all quotations and job cards in read-only mode. Cannot edit, create, confirm, invoice, or access Users tab.
                       </div>
                     </div>
                   </label>

@@ -192,6 +192,26 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                   Select &rarr;
                 </span>
               </button>
+
+              {/* VIEWER - AUDIT1 */}
+              <button
+                type="button"
+                onClick={() => handleSelectUsername('AUDIT1')}
+                className="w-full p-2.5 rounded-lg border border-purple-200 bg-purple-50/60 hover:bg-purple-100/70 text-left transition flex items-center justify-between group cursor-pointer"
+              >
+                <div>
+                  <div className="font-bold text-purple-950 flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 rounded bg-purple-700 text-white text-[10px] font-extrabold uppercase">
+                      VIEWER
+                    </span>
+                    <span className="font-mono font-bold">AUDIT1</span>
+                  </div>
+                  <div className="text-[11px] text-purple-800 mt-0.5">Read-only audit access to quotations & job cards</div>
+                </div>
+                <span className="text-purple-700 text-xs font-semibold opacity-0 group-hover:opacity-100 transition">
+                  Select &rarr;
+                </span>
+              </button>
             </div>
           </div>
         </form>

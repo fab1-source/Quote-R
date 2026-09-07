@@ -45,6 +45,7 @@ interface TopNavbarProps {
   salesmanName?: string;
   currentUser?: UserAccount;
   onLogout?: () => void;
+  onUnconfirmQuotation?: () => void;
 }
 
 export const TopNavbar: React.FC<TopNavbarProps> = ({
@@ -70,8 +71,10 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   salesmanName,
   currentUser,
   onLogout,
+  onUnconfirmQuotation,
 }) => {
-  const isLocked = isCancelled || isConfirmed;
+  const isViewer = currentUser?.role === 'VIEWER';
+  const isLocked = isCancelled || isConfirmed || isViewer;
   const isProduction = currentUser?.role === 'PRODUCTION';
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm print:hidden">
@@ -98,7 +101,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           <div>
             <div className="flex items-center gap-1.5 flex-wrap">
               {currentRefNo ? (
-                <span className={`font-mono font-bold text-xs sm:text-sm px-2 py-0.5 rounded border ${
+                <span className={`font-mono font-bold text-xs sm:text-sm px-2.5 py-1 rounded border ${
                   isCancelled 
                     ? 'text-red-700 bg-red-100/70 border-red-300' 
                     : 'text-[#7B1818] bg-red-50 border-red-200'
@@ -120,20 +123,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                   Confirmed (Locked)
                 </span>
               )}
-              {clientName && (
-                <span className="text-xs text-slate-600 truncate max-w-[120px] sm:max-w-[180px] font-medium hidden sm:inline-block">
-                  • {clientName}
-                </span>
-              )}
-              {salesmanName && (
-                <span className="text-xs text-amber-900 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded truncate max-w-[140px] font-semibold hidden md:inline-block">
-                  👤 {salesmanName}
-                </span>
-              )}
             </div>
-            <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold hidden sm:block">
-              Inter Glass Co. LLC • Quotation Portal
-            </p>
           </div>
         </div>
 
@@ -179,48 +169,21 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                 </button>
               </div>
 
-              {/* Sub-view Switcher when on Quotations Portal */}
+              {/* Quotation Preview button */}
               {portalTab === 'quotations' && (
-                <div className="hidden md:flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('edit')}
-                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                      activeTab === 'edit'
-                        ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-blue-600" />
-                    <span className="hidden sm:inline">{isLocked ? 'Specs' : 'Form &'} </span>
-                    <span>{isLocked ? '(Locked)' : 'Builder'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('preview')}
-                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                      activeTab === 'preview'
-                        ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Eye className="w-3.5 h-3.5 text-slate-500" />
-                    <span className="hidden sm:inline">Quotation </span><span>Preview</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('job_card')}
-                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                      activeTab === 'job_card'
-                        ? 'bg-white text-emerald-800 shadow-xs font-bold'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                    title="Factory Job Card with sizes and specs, zero amounts, zero terms"
-                  >
-                    <ClipboardList className="w-3.5 h-3.5 text-emerald-600" />
-                    <span className="hidden sm:inline">Job </span><span>Card</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab(activeTab === 'preview' ? 'edit' : 'preview')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition cursor-pointer ${
+                    activeTab === 'preview'
+                      ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                      : 'bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border-slate-200 shadow-2xs'
+                  }`}
+                  title={activeTab === 'preview' ? 'Return to Quotation Editor' : 'Quotation Preview'}
+                >
+                  <Eye className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Quotation Preview</span>
+                </button>
               )}
             </>
           )}
@@ -238,19 +201,6 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             >
               <Save className="w-3.5 h-3.5 text-emerald-600" />
               <span className="hidden sm:inline">Save</span>
-            </button>
-          )}
-
-          {/* Add Glass Section (+) - hidden if locked or production */}
-          {!isLocked && !isProduction && (
-            <button
-              type="button"
-              onClick={onAddGlassSection}
-              className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md shadow-xs transition cursor-pointer"
-              title="Add a new glass type section (Glass -02, Glass -03...)"
-            >
-              <Plus className="w-3.5 h-3.5 text-blue-600" />
-              <span>Add Glass Type ({glassSectionCount + 1})</span>
             </button>
           )}
 
@@ -290,7 +240,9 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                     ? 'bg-red-700'
                     : currentUser.role === 'ESTIMATION'
                     ? 'bg-blue-700'
-                    : 'bg-emerald-700'
+                    : currentUser.role === 'PRODUCTION'
+                    ? 'bg-emerald-700'
+                    : 'bg-purple-700'
                 }`}
                 title={`${currentUser.username} (${currentUser.role})`}
               >
@@ -315,6 +267,18 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         </div>
       </div>
 
+      {/* Viewer Banner underneath navbar */}
+      {isViewer && !isCancelled && !isConfirmed && (
+        <div className="bg-purple-50 border-t border-purple-200 px-4 py-2 text-center text-xs text-purple-900 flex items-center justify-center gap-2">
+          <span className="font-bold uppercase tracking-wider bg-purple-700 text-white text-[10px] px-1.5 py-0.5 rounded">
+            Auditor Viewer Mode
+          </span>
+          <span>
+            Viewing in read-only audit mode. Editing, adding items, and saving are disabled.
+          </span>
+        </div>
+      )}
+
       {/* Cancelled Banner underneath navbar */}
       {isCancelled && (
         <div className="bg-red-50 border-t border-red-200 px-4 py-2 text-center text-xs text-red-800 flex items-center justify-center gap-2">
@@ -334,13 +298,23 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 
       {/* Confirmed Banner underneath navbar */}
       {isConfirmed && (
-        <div className="bg-emerald-50 border-t border-emerald-200 px-4 py-2 text-center text-xs text-emerald-900 flex items-center justify-center gap-2">
-          <span className="font-bold uppercase tracking-wider bg-emerald-600 text-white text-[10px] px-1.5 py-0.5 rounded">
+        <div className="bg-emerald-50 border-t border-emerald-200 px-4 py-1.5 text-center text-xs text-emerald-900 flex flex-wrap items-center justify-center gap-2">
+          <span className="font-bold uppercase tracking-wider bg-emerald-600 text-white text-[10px] px-1.5 py-0.5 rounded shadow-2xs">
             Quotation Confirmed
           </span>
           <span>
             Order assigned to {salesmanName ? <strong>{salesmanName}</strong> : 'Salesman'}. This quotation is confirmed and locked for editing.
           </span>
+          {onUnconfirmQuotation && (
+            <button
+              type="button"
+              onClick={onUnconfirmQuotation}
+              className="ml-2 px-2.5 py-0.5 text-xs font-semibold bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded shadow-2xs transition-colors cursor-pointer"
+              title="Unlock quotation editing (Admin)"
+            >
+              Unlock Editing
+            </button>
+          )}
         </div>
       )}
     </header>

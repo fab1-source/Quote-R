@@ -84,7 +84,7 @@ export interface Quotation {
   bankDetails: BankDetails;
 }
 
-export type UserRole = 'ADMIN' | 'ESTIMATION' | 'PRODUCTION';
+export type UserRole = 'ADMIN' | 'ESTIMATION' | 'PRODUCTION' | 'VIEWER';
 
 export interface UserAccount {
   id: string;

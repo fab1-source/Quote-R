@@ -31,6 +31,15 @@ export const DEFAULT_USERS: UserAccount[] = [
     name: 'Production & Factory Team (FACTORY1)',
     createdAt: '2026-01-01',
   },
+  {
+    id: 'user-audit1',
+    username: 'AUDIT1',
+    password: 'AUDIT1',
+    role: 'VIEWER',
+    isActive: true,
+    name: 'Audit & Compliance Team (AUDIT1)',
+    createdAt: '2026-01-01',
+  },
 ];
 
 /**
