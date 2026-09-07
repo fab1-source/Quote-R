@@ -1,6 +1,6 @@
 {
-  "name": "Glass Quotation Generator",
-  "description": "Intranet glass quotation system with Excel paste, multi-glass sections, automated area calculations, print formatting, and local PDF export.",
+  "name": "Interglass Quotations & Job Cards",
+  "description": "Intranet glass quotation and job card management system with centralized shared database for multiple estimators and factory teams.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

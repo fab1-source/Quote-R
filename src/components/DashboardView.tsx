@@ -29,7 +29,8 @@ import {
   Users as UsersIcon,
   Shield,
   Clock,
-  MessageSquare
+  MessageSquare,
+  Database
 } from 'lucide-react';
 import { Quotation, UserAccount } from '../types';
 import { InterglassEmblem } from './InterglassLogo';
@@ -37,6 +38,7 @@ import { calculateQuotationTotals } from '../utils/calculations';
 import { generateNextQuoteNumber, ConfirmationDetails, getDefaultDeliveryDate, updateJobCardFlags } from '../utils/quotationStorage';
 import { exportJobCardToExcel } from '../utils/optimizerExport';
 import { UsersManagementView } from './UsersManagementView';
+import { DbStatusResponse } from '../utils/apiClient';
 
 interface DashboardViewProps {
   quotations: Quotation[];
@@ -65,6 +67,8 @@ interface DashboardViewProps {
       factoryComments?: string;
     }
   ) => void;
+  dbStatus?: DbStatusResponse | null;
+  onOpenDbStatus?: () => void;
 }
 
 /**
@@ -172,6 +176,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onLogout,
   onNotification,
   onUpdateJobCardFlags,
+  dbStatus,
+  onOpenDbStatus,
 }) => {
   const isProduction = currentUser.role === 'PRODUCTION';
   const isAdmin = currentUser.role === 'ADMIN';
@@ -842,6 +848,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             <div className="flex items-center gap-3">
+              {/* Centralized Intranet Database Status Button */}
+              {onOpenDbStatus && (
+                <button
+                  type="button"
+                  onClick={onOpenDbStatus}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 shadow-2xs transition-colors cursor-pointer"
+                  title="Centralized Intranet Database Status"
+                >
+                  <Database className={`w-3.5 h-3.5 ${dbStatus?.engine === 'mongodb' ? 'text-emerald-600' : 'text-blue-600'}`} />
+                  <span className="hidden sm:inline font-mono text-[11px] font-bold">
+                    {dbStatus?.engine === 'mongodb' ? 'MongoDB' : 'Intranet DB'}
+                  </span>
+                  <span className={`w-2 h-2 rounded-full ${dbStatus?.engine === 'mongodb' ? 'bg-emerald-500 animate-pulse' : 'bg-blue-500'}`} />
+                </button>
+              )}
+
               {/* Logged in User Pill */}
               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl shadow-2xs">
                 <div

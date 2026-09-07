@@ -17,10 +17,12 @@ import {
   FileText,
   LogOut,
   Shield,
-  UserCheck
+  UserCheck,
+  Database
 } from 'lucide-react';
 import { InterglassEmblem } from './InterglassLogo';
 import { UserAccount } from '../types';
+import { DbStatusResponse } from '../utils/apiClient';
 
 interface TopNavbarProps {
   portalTab?: 'quotations' | 'cost_sheet';
@@ -46,6 +48,8 @@ interface TopNavbarProps {
   currentUser?: UserAccount;
   onLogout?: () => void;
   onUnconfirmQuotation?: () => void;
+  dbStatus?: DbStatusResponse | null;
+  onOpenDbStatus?: () => void;
 }
 
 export const TopNavbar: React.FC<TopNavbarProps> = ({
@@ -72,6 +76,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   currentUser,
   onLogout,
   onUnconfirmQuotation,
+  dbStatus,
+  onOpenDbStatus,
 }) => {
   const isViewer = currentUser?.role === 'VIEWER';
   const isLocked = isCancelled || isConfirmed || isViewer;
@@ -230,6 +236,22 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             )}
             <span>PDF</span>
           </button>
+
+          {/* Centralized Intranet Database Status Button */}
+          {onOpenDbStatus && (
+            <button
+              type="button"
+              onClick={onOpenDbStatus}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-slate-950 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors cursor-pointer shadow-2xs"
+              title="Centralized Intranet Database Status"
+            >
+              <Database className={`w-3.5 h-3.5 ${dbStatus?.engine === 'mongodb' ? 'text-emerald-600' : 'text-blue-600'}`} />
+              <span className="hidden sm:inline font-mono text-[11px] font-bold">
+                {dbStatus?.engine === 'mongodb' ? 'MongoDB' : 'Intranet DB'}
+              </span>
+              <span className={`w-2 h-2 rounded-full ${dbStatus?.engine === 'mongodb' ? 'bg-emerald-500 animate-pulse' : 'bg-blue-500'}`} />
+            </button>
+          )}
 
           {/* Current User Session & Logout */}
           {currentUser && (

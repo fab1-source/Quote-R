@@ -1,5 +1,12 @@
 import { Quotation } from '../types';
 import { createBlankQuotation, createSampleQuotation } from '../data/defaultData';
+import {
+  fetchQuotationsApi,
+  saveQuotationApi,
+  deleteQuotationApi,
+  getNextRefApi,
+  syncQuotationsApi,
+} from './apiClient';
 
 export const STORAGE_KEY = 'interglass_saved_quotations_v1';
 
@@ -80,7 +87,7 @@ export function getSavedQuotations(): Quotation[] {
 }
 
 /**
- * Saves or updates a quotation in storage.
+ * Saves or updates a quotation in storage and syncs with backend server API.
  * If quote already exists (by id or refNo), updates it; otherwise prepends it.
  */
 export function saveQuotation(quote: Quotation): Quotation[] {
@@ -109,11 +116,16 @@ export function saveQuotation(quote: Quotation): Quotation[] {
     console.error('Failed to save quotation to storage', error);
   }
 
+  // Push to centralized server database asynchronously
+  saveQuotationApi(updatedQuote).catch((err) => {
+    console.warn('Background server sync error:', err);
+  });
+
   return newList;
 }
 
 /**
- * Deletes a quotation by ID.
+ * Deletes a quotation by ID and syncs with server API.
  */
 export function deleteQuotation(id: string): Quotation[] {
   const currentList = getSavedQuotations();
@@ -123,6 +135,11 @@ export function deleteQuotation(id: string): Quotation[] {
   } catch (error) {
     console.error('Failed to delete quotation from storage', error);
   }
+
+  deleteQuotationApi(id).catch((err) => {
+    console.warn('Background delete sync error:', err);
+  });
+
   return filtered;
 }
 
@@ -133,15 +150,19 @@ export function deleteQuotation(id: string): Quotation[] {
 export function cancelQuotation(id: string, reason: string): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
+  let changedQuote: Quotation | null = null;
+
   const updatedList = currentList.map((q) => {
     if (q.id === id) {
-      return {
+      const u: Quotation = {
         ...q,
         status: 'cancelled' as const,
         cancellationReason: reason.trim(),
         cancelledAt: now,
         updatedAt: now,
       };
+      changedQuote = u;
+      return u;
     }
     return q;
   });
@@ -150,6 +171,10 @@ export function cancelQuotation(id: string, reason: string): Quotation[] {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
   } catch (error) {
     console.error('Failed to cancel quotation in storage', error);
+  }
+
+  if (changedQuote) {
+    saveQuotationApi(changedQuote).catch((err) => console.warn('Cancel server sync error:', err));
   }
 
   return updatedList;
@@ -181,9 +206,11 @@ export function getDefaultDeliveryDate(daysFromNow: number = 4): string {
 export function confirmQuotation(id: string, details: ConfirmationDetails): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
+  let changedQuote: Quotation | null = null;
+
   const updatedList = currentList.map((q) => {
     if (q.id === id) {
-      return {
+      const u: Quotation = {
         ...q,
         status: 'confirmed' as const,
         confirmedAt: now,
@@ -197,6 +224,8 @@ export function confirmQuotation(id: string, details: ConfirmationDetails): Quot
         confirmedTotalAmount: details.totalAmount,
         committedDeliveryDate: details.committedDeliveryDate || getDefaultDeliveryDate(4),
       };
+      changedQuote = u;
+      return u;
     }
     return q;
   });
@@ -205,6 +234,10 @@ export function confirmQuotation(id: string, details: ConfirmationDetails): Quot
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
   } catch (error) {
     console.error('Failed to confirm quotation in storage', error);
+  }
+
+  if (changedQuote) {
+    saveQuotationApi(changedQuote).catch((err) => console.warn('Confirm server sync error:', err));
   }
 
   return updatedList;
@@ -224,13 +257,17 @@ export function updateJobCardFlags(
 ): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
+  let changedQuote: Quotation | null = null;
+
   const updatedList = currentList.map((q) => {
     if (q.id === id) {
-      return {
+      const u: Quotation = {
         ...q,
         ...updates,
         updatedAt: now,
       };
+      changedQuote = u;
+      return u;
     }
     return q;
   });
@@ -239,6 +276,10 @@ export function updateJobCardFlags(
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
   } catch (error) {
     console.error('Failed to update job card flags in storage', error);
+  }
+
+  if (changedQuote) {
+    saveQuotationApi(changedQuote).catch((err) => console.warn('Job card server sync error:', err));
   }
 
   return updatedList;
@@ -257,14 +298,18 @@ export function updateJobCardComments(id: string, factoryComments: string): Quot
 export function unconfirmQuotation(id: string): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
+  let changedQuote: Quotation | null = null;
+
   const updatedList = currentList.map((q) => {
     if (q.id === id) {
-      return {
+      const u: Quotation = {
         ...q,
         status: 'active' as const,
         updatedAt: now,
         confirmedAt: undefined,
       };
+      changedQuote = u;
+      return u;
     }
     return q;
   });
@@ -275,7 +320,77 @@ export function unconfirmQuotation(id: string): Quotation[] {
     console.error('Failed to unconfirm quotation in storage', error);
   }
 
+  if (changedQuote) {
+    saveQuotationApi(changedQuote).catch((err) => console.warn('Unconfirm server sync error:', err));
+  }
+
   return updatedList;
+}
+
+/**
+ * Loads quotations from server API and keeps local cache synchronized.
+ */
+export async function loadQuotationsFromServer(): Promise<Quotation[]> {
+  try {
+    const serverQuotes = await fetchQuotationsApi();
+    if (serverQuotes && Array.isArray(serverQuotes)) {
+      if (serverQuotes.length > 0) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(serverQuotes));
+        return serverQuotes;
+      } else {
+        // If server database is empty, seed it with local quotations
+        const localQuotes = getSavedQuotations();
+        if (localQuotes.length > 0) {
+          await syncQuotationsApi(localQuotes);
+          return localQuotes;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not sync with server API, using local storage cache', err);
+  }
+  return getSavedQuotations();
+}
+
+/**
+ * Creates a brand new quotation with server-allocated atomic sequential quote number.
+ */
+export async function createNewQuotationWithNextRefAsync(
+  date: Date = new Date(),
+  authorName?: string
+): Promise<Quotation> {
+  let nextRefNo = '';
+  let dated = formatQuotationDate(date);
+
+  try {
+    const res = await getNextRefApi(date);
+    if (res && res.nextRefNo) {
+      nextRefNo = res.nextRefNo;
+      dated = res.dated || dated;
+    }
+  } catch (err) {
+    console.warn('Server next ref error, using local fallback:', err);
+  }
+
+  if (!nextRefNo) {
+    const quotes = getSavedQuotations();
+    nextRefNo = generateNextQuoteNumber(date, quotes);
+  }
+
+  const newQuote = createBlankQuotation();
+  newQuote.id = `quote-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+  newQuote.status = 'active';
+  newQuote.from.refNo = nextRefNo;
+  newQuote.from.dated = dated;
+  newQuote.title = `Quotation ${nextRefNo}`;
+  if (authorName) {
+    newQuote.authorName = authorName;
+  }
+
+  // Save new quote to server immediately to reserve reference number
+  saveQuotation(newQuote);
+
+  return newQuote;
 }
 
 /**

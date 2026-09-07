@@ -35,11 +35,14 @@ import {
   updateJobCardFlags,
   ConfirmationDetails,
   createNewQuotationWithNextRef,
+  createNewQuotationWithNextRefAsync,
+  loadQuotationsFromServer,
   duplicateQuotation,
   initializeSampleIfEmpty,
   STORAGE_KEY,
 } from './utils/quotationStorage';
 import { getCurrentUser, logoutUser } from './utils/userStorage';
+import { getDbStatusApi, DbStatusResponse } from './utils/apiClient';
 import { calculateQuotationTotals } from './utils/calculations';
 import { convertNumberToWords } from './utils/numberToWords';
 import { exportToPdf } from './utils/pdfGenerator';
@@ -54,6 +57,7 @@ import { JobCardDocument } from './components/JobCardDocument';
 import { CostSheetView } from './components/CostSheetView';
 import { SavedQuotationsModal } from './components/SavedQuotationsModal';
 import { PasteExcelModal } from './components/PasteExcelModal';
+import { DatabaseStatusModal } from './components/DatabaseStatusModal';
 
 export default function App() {
   // Current logged in user session
@@ -67,11 +71,56 @@ export default function App() {
     return initializeSampleIfEmpty();
   });
 
+  // Centralized Database & Intranet sync state
+  const [dbStatus, setDbStatus] = useState<DbStatusResponse | null>(null);
+  const [isDbModalOpen, setIsDbModalOpen] = useState(false);
+
   // Current active quotation being viewed/edited in the portal
   const [quotation, setQuotation] = useState<Quotation>(() => {
     const list = getSavedQuotations();
     return list[0] || createBlankQuotation();
   });
+
+  // Refresh DB status helper
+  const refreshDbStatus = async () => {
+    try {
+      const status = await getDbStatusApi();
+      if (status) {
+        setDbStatus(status);
+      }
+    } catch {
+      // Offline/fallback
+    }
+  };
+
+  // Initial load and periodic intranet database polling
+  useEffect(() => {
+    // Initial fetch from centralized server DB
+    loadQuotationsFromServer().then((quotes) => {
+      if (quotes && quotes.length > 0) {
+        setQuotations(quotes);
+        setQuotation((prev) => {
+          if (!prev || !prev.id) return quotes[0];
+          const match = quotes.find((q) => q.id === prev.id);
+          return match || prev;
+        });
+      }
+    });
+
+    refreshDbStatus();
+
+    // Poll every 6 seconds for multi-user real-time intranet updates
+    const pollInterval = setInterval(() => {
+      loadQuotationsFromServer().then((quotes) => {
+        if (quotes && quotes.length > 0) {
+          setQuotations(quotes);
+        }
+      });
+      refreshDbStatus();
+    }, 6000);
+
+    return () => clearInterval(pollInterval);
+  }, []);
 
   // Primary tab in portal: 'quotations' | 'cost_sheet'
   const [portalTab, setPortalTab] = useState<'quotations' | 'cost_sheet'>('quotations');
@@ -108,20 +157,31 @@ export default function App() {
     calculateQuotationTotals(quotation);
   const amountInWords = convertNumberToWords(totalWithVatAED);
 
-  // DASHBOARD ACTION: Add New Quotation with format IGC/{YY}/{MM}/{SERIAL}
-  const handleAddNewQuotation = () => {
+  // DASHBOARD ACTION: Add New Quotation with atomic consecutive reference from Centralized DB
+  const handleAddNewQuotation = async () => {
     if (currentUser?.role === 'VIEWER') {
       showNotification('Access restricted: Viewers cannot create new quotations.', 'warning');
       return;
     }
-    const newQuote = createNewQuotationWithNextRef(new Date());
-    const updatedList = saveQuotation(newQuote);
-    setQuotations(updatedList);
-    setQuotation(newQuote);
-    setPortalTab('quotations');
-    setActiveTab('edit');
-    setViewMode('portal');
-    showNotification(`Created new quotation ${newQuote.from.refNo}`, 'success');
+    try {
+      const newQuote = await createNewQuotationWithNextRefAsync(new Date(), currentUser?.username);
+      const updatedList = saveQuotation(newQuote);
+      setQuotations(updatedList);
+      setQuotation(newQuote);
+      setPortalTab('quotations');
+      setActiveTab('edit');
+      setViewMode('portal');
+      showNotification(`Created new quotation ${newQuote.from.refNo}`, 'success');
+    } catch {
+      const fallbackQuote = createNewQuotationWithNextRef(new Date(), currentUser?.username);
+      const updatedList = saveQuotation(fallbackQuote);
+      setQuotations(updatedList);
+      setQuotation(fallbackQuote);
+      setPortalTab('quotations');
+      setActiveTab('edit');
+      setViewMode('portal');
+      showNotification(`Created new quotation ${fallbackQuote.from.refNo}`, 'success');
+    }
   };
 
   // Auth handlers
@@ -494,6 +554,8 @@ export default function App() {
           onLogout={handleLogout}
           onNotification={showNotification}
           onUpdateJobCardFlags={handleUpdateJobCardFlags}
+          dbStatus={dbStatus}
+          onOpenDbStatus={() => setIsDbModalOpen(true)}
         />
       ) : (() => {
         const isLocked = quotation.status === 'cancelled' || quotation.status === 'confirmed' || isViewerUser;
@@ -533,6 +595,8 @@ export default function App() {
               currentUser={currentUser}
               onLogout={handleLogout}
               onUnconfirmQuotation={isAdminUser && quotation.status === 'confirmed' ? () => handleUnconfirmQuotation(quotation.id) : undefined}
+              dbStatus={dbStatus}
+              onOpenDbStatus={() => setIsDbModalOpen(true)}
             />
 
             {/* Main Content Area */}
@@ -956,6 +1020,15 @@ export default function App() {
           onApply={handleApplyPastedItemsToActiveSection}
         />
       )}
+
+      {/* Centralized Intranet Database Status Modal */}
+      <DatabaseStatusModal
+        isOpen={isDbModalOpen}
+        onClose={() => setIsDbModalOpen(false)}
+        dbStatus={dbStatus}
+        onRefreshStatus={refreshDbStatus}
+        quotationCount={quotations.length}
+      />
     </div>
   );
 }
