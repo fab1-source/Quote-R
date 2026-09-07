@@ -62,9 +62,16 @@ export function getSavedQuotations(): Quotation[] {
     if (!data) return [];
     const parsed = JSON.parse(data);
     if (Array.isArray(parsed)) {
-      // Cleanse any legacy references from storage
+      // Cleanse any legacy references or sample client from storage
       const cleaned = parsed
-        .filter((q) => !q.id?.includes('thamvos') && q.client?.name !== 'Thamvos Interiors')
+        .filter(
+          (q) =>
+            !q.id?.includes('thamvos') &&
+            q.client?.name !== 'Thamvos Interiors' &&
+            q.id !== 'sample-quote-001' &&
+            q.from?.refNo !== 'IG/26-06/ 3685' &&
+            !q.client?.name?.toLowerCase().includes('sample client')
+        )
         .map((q) => {
           let str = JSON.stringify(q);
           if (str.includes('Thamvos') || str.includes('thamvos')) {
@@ -118,9 +125,14 @@ export function saveQuotation(quote: Quotation): Quotation[] {
   };
 
   const refNo = (updatedQuote.from?.refNo || '').trim();
+  const rev = (updatedQuote.from?.rev || 'REV-00').trim().toUpperCase();
 
   const existingIndex = currentList.findIndex(
-    (q) => q.id === updatedQuote.id || (refNo && q.from?.refNo?.trim() === refNo)
+    (q) =>
+      q.id === updatedQuote.id ||
+      (refNo &&
+        q.from?.refNo?.trim() === refNo &&
+        (q.from?.rev || 'REV-00').trim().toUpperCase() === rev)
   );
 
   let newList: Quotation[];
@@ -370,8 +382,13 @@ export async function loadQuotationsFromServer(): Promise<Quotation[]> {
         // Merge with any newer local edits in local storage so active work isn't overwritten
         const localQuotes = getSavedQuotations();
         const merged = serverQuotes.map((sq) => {
+          const sqRev = (sq.from?.rev || 'REV-00').trim().toUpperCase();
           const localMatch = localQuotes.find(
-            (lq) => lq.id === sq.id || (lq.from?.refNo && lq.from.refNo === sq.from?.refNo)
+            (lq) =>
+              lq.id === sq.id ||
+              (lq.from?.refNo &&
+                lq.from.refNo === sq.from?.refNo &&
+                (lq.from?.rev || 'REV-00').trim().toUpperCase() === sqRev)
           );
           if (localMatch && localMatch.updatedAt && sq.updatedAt) {
             const localTime = new Date(localMatch.updatedAt).getTime();
@@ -383,14 +400,23 @@ export async function loadQuotationsFromServer(): Promise<Quotation[]> {
           return sq;
         });
 
-        // Deduplicate any records with the same refNo
-        const seenRefs = new Set<string>();
+        // Deduplicate records sharing the exact same refNo AND rev, while filtering out Sample Client
+        const seenKeys = new Set<string>();
         const deduped: Quotation[] = [];
         for (const q of merged) {
+          if (
+            q.id === 'sample-quote-001' ||
+            q.from?.refNo === 'IG/26-06/ 3685' ||
+            q.client?.name?.toLowerCase().includes('sample client')
+          ) {
+            continue;
+          }
           const ref = (q.from?.refNo || '').trim();
+          const rev = (q.from?.rev || 'REV-00').trim().toUpperCase();
           if (ref) {
-            if (seenRefs.has(ref)) continue;
-            seenRefs.add(ref);
+            const key = `${ref}:::${rev}`;
+            if (seenKeys.has(key)) continue;
+            seenKeys.add(key);
           }
           deduped.push(q);
         }
@@ -504,8 +530,81 @@ export function duplicateQuotation(id: string, authorName?: string): { newQuotat
 }
 
 /**
+ * Calculates the next revision string based on current revision (e.g. REV-00 -> REV-01, R-00 -> R-01).
+ */
+export function getNextRevisionCode(currentRev: string = 'REV-00'): string {
+  const clean = (currentRev || '').trim().toUpperCase();
+  const numMatch = clean.match(/(\d+)/);
+  const currentNum = numMatch ? parseInt(numMatch[1], 10) : 0;
+  const nextNum = currentNum + 1;
+  const padded = String(nextNum).padStart(2, '0');
+  if (clean.startsWith('R-') || clean.startsWith('R0')) {
+    return `R-${padded}`;
+  }
+  return `REV-${padded}`;
+}
+
+/**
+ * Creates a revised edition of an existing quotation (e.g., R-00 -> R-01).
+ * The original quotation becomes locked, marked uneditable, and archived.
+ * The new revision inherits all items, client details, rates, and scopes for continued editing.
+ */
+export function createQuotationRevision(
+  sourceQuote: Quotation,
+  authorName?: string
+): { originalQuote: Quotation; newRevision: Quotation; allQuotes: Quotation[] } {
+  const currentRev = (sourceQuote.from?.rev || 'REV-00').trim();
+  const nextRev = getNextRevisionCode(currentRev);
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  // 1. Lock and archive the original quotation (e.g. R-00)
+  const originalUpdated: Quotation = {
+    ...sourceQuote,
+    isLocked: true,
+    isArchivedRevision: true,
+    supersededBy: nextRev,
+    updatedAt: nowIso,
+  };
+
+  // 2. Clone to new revision (e.g. R-01) with deep copy
+  const newId = `quote-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+  const clientName = sourceQuote.client?.name ? sourceQuote.client.name.trim() : '';
+  const newRevision: Quotation = {
+    ...JSON.parse(JSON.stringify(sourceQuote)),
+    id: newId,
+    title: `${clientName ? clientName + ' - ' : ''}${sourceQuote.from.refNo} (${nextRev})`,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    authorName: authorName || sourceQuote.authorName || 'ESTIMATOR1',
+    status: 'active',
+    isLocked: false,
+    isArchivedRevision: false,
+    supersededBy: undefined,
+    revisionOfId: sourceQuote.id,
+    revisionNumber: (sourceQuote.revisionNumber || 0) + 1,
+    from: {
+      ...sourceQuote.from,
+      rev: nextRev,
+      dated: formatQuotationDate(now),
+    },
+  };
+
+  // Save the locked original first, then save the new revision
+  saveQuotation(originalUpdated);
+  const allQuotes = saveQuotation(newRevision);
+
+  // Push both to backend API
+  saveQuotationApi(originalUpdated).catch((err) => console.warn('Sync original quote lock failed:', err));
+  saveQuotationApi(newRevision).catch((err) => console.warn('Sync new revision failed:', err));
+
+  return { originalQuote: originalUpdated, newRevision, allQuotes };
+}
+
+/**
  * Initializes saved quotations if available, or starts clean.
  */
 export function initializeSampleIfEmpty(): Quotation[] {
   return getSavedQuotations();
 }
+

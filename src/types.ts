@@ -60,6 +60,11 @@ export interface Quotation {
   createdAt: string;
   updatedAt: string;
   status?: 'active' | 'cancelled' | 'confirmed';
+  isLocked?: boolean;
+  supersededBy?: string; // Reference of newer revision that replaced this, e.g. "REV-01"
+  isArchivedRevision?: boolean; // True if this is an older revision kept for reference
+  revisionOfId?: string; // The ID of the previous revision from which this was created
+  revisionNumber?: number; // 0 for R-00, 1 for R-01, 2 for R-02...
   cancellationReason?: string;
   cancelledAt?: string;
   confirmedAt?: string;

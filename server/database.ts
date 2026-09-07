@@ -42,7 +42,7 @@ function readFileDb(): FileSchema {
   ensureDataDir();
   if (!fs.existsSync(DB_FILE)) {
     const initial: FileSchema = {
-      quotations: [createSampleQuotation()],
+      quotations: [],
       users: DEFAULT_USERS,
       counters: {},
     };
@@ -53,8 +53,14 @@ function readFileDb(): FileSchema {
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
     const parsed = JSON.parse(raw);
+    const filteredQuotes = (Array.isArray(parsed.quotations) ? parsed.quotations : []).filter(
+      (q: any) =>
+        q.id !== 'sample-quote-001' &&
+        q.from?.refNo !== 'IG/26-06/ 3685' &&
+        !q.client?.name?.toLowerCase().includes('sample client')
+    );
     return {
-      quotations: Array.isArray(parsed.quotations) ? parsed.quotations : [],
+      quotations: filteredQuotes,
       users: Array.isArray(parsed.users) && parsed.users.length > 0 ? parsed.users : DEFAULT_USERS,
       counters: parsed.counters || {},
     };
@@ -130,11 +136,20 @@ async function seedMongoIfEmpty() {
       await mongoDb.createCollection('users');
     }
 
-    const quoteCount = await mongoDb.collection('quotations').countDocuments();
-    if (quoteCount === 0) {
-      console.log('[DB] Seeding MongoDB with initial sample quotation...');
-      const sample = createSampleQuotation();
-      await mongoDb.collection('quotations').insertOne(sample as any);
+    // Purge any sample client LLC quote if present in MongoDB
+    try {
+      const deleteSampleResult = await mongoDb.collection('quotations').deleteMany({
+        $or: [
+          { id: 'sample-quote-001' },
+          { 'from.refNo': 'IG/26-06/ 3685' },
+          { 'client.name': { $regex: /sample client/i } },
+        ],
+      });
+      if (deleteSampleResult.deletedCount > 0) {
+        console.log(`[DB] Purged ${deleteSampleResult.deletedCount} Sample Client LLC quotation(s) from MongoDB`);
+      }
+    } catch (err) {
+      console.warn('[DB] Could not purge sample quotation:', err);
     }
 
     const userCount = await mongoDb.collection('users').countDocuments();
@@ -175,13 +190,16 @@ async function cleanupMongoDuplicates() {
     for (const doc of allQuotes) {
       const ref = (doc.from?.refNo || '').trim();
       if (!ref) continue;
-      if (!byRef.has(ref)) byRef.set(ref, []);
-      byRef.get(ref)!.push(doc);
+      const rev = (doc.from?.rev || 'REV-00').trim().toUpperCase();
+      const key = `${ref}:::${rev}`;
+      if (!byRef.has(key)) byRef.set(key, []);
+      byRef.get(key)!.push(doc);
     }
 
-    for (const [ref, docs] of byRef.entries()) {
+    for (const [key, docs] of byRef.entries()) {
       if (docs.length > 1) {
-        console.log(`[DB] Detected ${docs.length} duplicate quotations for "${ref}". Cleaning up...`);
+        const [ref, rev] = key.split(':::');
+        console.log(`[DB] Detected ${docs.length} duplicate quotations for "${ref} (${rev})". Cleaning up...`);
 
         // Sort descending: prefer quotes with client name, more glass items, higher total, newer date
         docs.sort((a, b) => {
@@ -280,16 +298,17 @@ export async function saveOrUpdateQuotation(quotation: Quotation): Promise<Quota
   };
 
   const refNo = (quoteToSave.from?.refNo || '').trim();
+  const rev = (quoteToSave.from?.rev || 'REV-00').trim();
 
   if (activeEngine === 'mongodb' && mongoDb) {
     try {
       const cleanDoc: any = { ...quoteToSave };
       delete cleanDoc._id; // Never let MongoDB immutable _id conflict
 
-      // Look for an existing quotation by id OR by exact from.refNo
+      // Look for an existing quotation by id OR by (exact from.refNo AND from.rev)
       const queryOr: any[] = [{ id: cleanDoc.id }];
       if (refNo) {
-        queryOr.push({ 'from.refNo': refNo });
+        queryOr.push({ 'from.refNo': refNo, 'from.rev': rev });
       }
 
       const existingDoc: any = await mongoDb.collection('quotations').findOne({ $or: queryOr });
@@ -313,7 +332,11 @@ export async function saveOrUpdateQuotation(quotation: Quotation): Promise<Quota
 
   const fileDb = readFileDb();
   const existingIdx = fileDb.quotations.findIndex(
-    (q) => q.id === quoteToSave.id || (refNo && q.from?.refNo?.trim() === refNo)
+    (q) =>
+      q.id === quoteToSave.id ||
+      (refNo &&
+        q.from?.refNo?.trim() === refNo &&
+        (q.from?.rev || 'REV-00').trim().toUpperCase() === rev.toUpperCase())
   );
 
   if (existingIdx >= 0) {

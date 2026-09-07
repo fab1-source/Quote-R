@@ -30,12 +30,19 @@ import {
   Shield,
   Clock,
   MessageSquare,
-  Database
+  Database,
+  GitBranch
 } from 'lucide-react';
 import { Quotation, UserAccount } from '../types';
 import { InterglassEmblem } from './InterglassLogo';
 import { calculateQuotationTotals } from '../utils/calculations';
-import { generateNextQuoteNumber, ConfirmationDetails, getDefaultDeliveryDate, updateJobCardFlags } from '../utils/quotationStorage';
+import {
+  generateNextQuoteNumber,
+  ConfirmationDetails,
+  getDefaultDeliveryDate,
+  updateJobCardFlags,
+  getNextRevisionCode
+} from '../utils/quotationStorage';
 import { exportJobCardToExcel } from '../utils/optimizerExport';
 import { UsersManagementView } from './UsersManagementView';
 import { DbStatusResponse } from '../utils/apiClient';
@@ -49,6 +56,7 @@ interface DashboardViewProps {
     portalTab?: 'quotations' | 'cost_sheet'
   ) => void;
   onDuplicateQuotation: (id: string) => void;
+  onReviseQuotation?: (quotation: Quotation) => void;
   onCancelQuotation: (id: string, reason: string) => void;
   onConfirmQuotation: (id: string, details: ConfirmationDetails) => void;
   onUnconfirmQuotation: (id: string) => void;
@@ -166,6 +174,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onAddNewQuotation,
   onOpenQuotation,
   onDuplicateQuotation,
+  onReviseQuotation,
   onCancelQuotation,
   onConfirmQuotation,
   onUnconfirmQuotation,
@@ -217,6 +226,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Confirmation Modal State (Read-only as per last saved quotation)
   const [quoteToConfirm, setQuoteToConfirm] = useState<Quotation | null>(null);
   const [committedDateInput, setCommittedDateInput] = useState<string>(() => getDefaultDeliveryDate(4));
+
+  // Revision Modal State
+  const [quoteToRevise, setQuoteToRevise] = useState<Quotation | null>(null);
 
   // Handle open confirmation modal
   const handleOpenConfirmationModal = (quote: Quotation) => {
@@ -603,7 +615,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Filter and sort quotations according to active dashboard tab & sub-filters
   const filteredQuotations = useMemo(() => {
-    return quotations
+    const rawFiltered = quotations
       .filter((q) => {
         // Tab 1: Quotations
         if (dashboardTab === 'quotations') {
@@ -636,6 +648,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         const query = searchTerm.toLowerCase().trim();
         const refMatch = (q.from?.refNo || '').toLowerCase().includes(query);
+        const revMatch = (q.from?.rev || '').toLowerCase().includes(query);
         const clientMatch = (q.client?.name || '').toLowerCase().includes(query);
         const emirateMatch = (q.client?.emirate || '').toLowerCase().includes(query);
         const attnMatch = (q.client?.kindAttn || '').toLowerCase().includes(query);
@@ -643,7 +656,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         const salesmanMatch = (q.salesmanName || '').toLowerCase().includes(query);
         const commentsMatch = (q.factoryComments || '').toLowerCase().includes(query);
 
-        const matchesSearch = !query || refMatch || clientMatch || emirateMatch || attnMatch || titleMatch || salesmanMatch || commentsMatch;
+        const matchesSearch =
+          !query ||
+          refMatch ||
+          revMatch ||
+          clientMatch ||
+          emirateMatch ||
+          attnMatch ||
+          titleMatch ||
+          salesmanMatch ||
+          commentsMatch;
 
         if (!matchesSearch) return false;
 
@@ -654,8 +676,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         }
 
         return true;
-      })
-      .sort((a, b) => {
+      });
+
+    // In Job Cards view, display confirmed production orders sorted directly
+    if (dashboardTab === 'job_cards') {
+      return rawFiltered.sort((a, b) => {
         if (sortBy === 'amount-desc') {
           const totalA = calculateQuotationTotals(a).totalWithVatAED;
           const totalB = calculateQuotationTotals(b).totalWithVatAED;
@@ -667,9 +692,60 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         if (sortBy === 'ref-desc') {
           return (b.from?.refNo || '').localeCompare(a.from?.refNo || '');
         }
-        // Default: date-desc (newest first)
         return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
       });
+    }
+
+    // In Quotations view: Group by base quotation reference number
+    // R-01 becomes the main quote at top of group, and original R-00 moves little below R-01
+    const groupsMap = new Map<string, Quotation[]>();
+    for (const q of rawFiltered) {
+      const baseKey = (q.from?.refNo || q.id).trim().toUpperCase();
+      const group = groupsMap.get(baseKey) || [];
+      group.push(q);
+      groupsMap.set(baseKey, group);
+    }
+
+    const sortedGroups: { mainQuote: Quotation; items: Quotation[] }[] = [];
+    for (const [, items] of groupsMap.entries()) {
+      // Sort within the family: active/highest revision first, then older archived revisions
+      items.sort((a, b) => {
+        const revNumA = a.revisionNumber ?? (a.isArchivedRevision ? 0 : 1);
+        const revNumB = b.revisionNumber ?? (b.isArchivedRevision ? 0 : 1);
+        if (revNumA !== revNumB) {
+          return revNumB - revNumA;
+        }
+        return (b.from?.rev || '').localeCompare(a.from?.rev || '');
+      });
+      sortedGroups.push({ mainQuote: items[0], items });
+    }
+
+    // Sort families using each group's main quote according to user's sortBy choice
+    sortedGroups.sort((gA, gB) => {
+      const a = gA.mainQuote;
+      const b = gB.mainQuote;
+      if (sortBy === 'amount-desc') {
+        const totalA = calculateQuotationTotals(a).totalWithVatAED;
+        const totalB = calculateQuotationTotals(b).totalWithVatAED;
+        return totalB - totalA;
+      }
+      if (sortBy === 'date-asc') {
+        return new Date(a.createdAt || a.updatedAt).getTime() - new Date(b.createdAt || b.updatedAt).getTime();
+      }
+      if (sortBy === 'ref-desc') {
+        return (b.from?.refNo || '').localeCompare(a.from?.refNo || '');
+      }
+      return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
+    });
+
+    // Flatten: each family begins with the main quote (e.g. R-01), followed by R-00 right below it
+    const result: Quotation[] = [];
+    for (const g of sortedGroups) {
+      for (const item of g.items) {
+        result.push(item);
+      }
+    }
+    return result;
   }, [quotations, dashboardTab, quotesFilter, jobCardsSubTab, searchTerm, selectedMonth, sortBy]);
 
   // Calculate Overall Dashboard Metrics
@@ -2097,83 +2173,139 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     const ref = q.from?.refNo || 'Pending Ref';
                     const isCancelled = q.status === 'cancelled';
                     const isConfirmed = q.status === 'confirmed';
+                    const isArchivedRevision = Boolean(q.isArchivedRevision || q.supersededBy || q.isLocked);
 
                     const boxBase = isConfirmed
                       ? 'bg-emerald-50/60 border-emerald-300 hover:bg-emerald-50 hover:border-emerald-400'
                       : isCancelled
                       ? 'bg-slate-100/75 border-slate-300 opacity-60'
+                      : isArchivedRevision
+                      ? 'bg-slate-50/90 border-slate-200/90 hover:bg-slate-100/80 text-slate-600'
                       : 'bg-white border-slate-200/90 hover:border-slate-300 hover:shadow-xs';
 
                     return (
                       <tr
                         key={q.id}
-                        onClick={() => onOpenQuotation(q, 'edit')}
-                        className="transition-all cursor-pointer group text-slate-800"
+                        onClick={() => onOpenQuotation(q, isArchivedRevision ? 'preview' : 'edit')}
+                        className={`transition-all cursor-pointer group text-slate-800 ${
+                          isArchivedRevision ? 'opacity-85' : ''
+                        }`}
                       >
                         {/* Confirmed Checkbox Column: Left edge of box */}
                         <td
                           className={`py-3 px-3 align-middle text-center border-y border-l rounded-l-xl transition-colors ${boxBase}`}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (isCancelled) return;
-                              handleOpenConfirmationModal(q);
-                            }}
-                            disabled={isCancelled}
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${
-                              isCancelled
-                                ? 'opacity-40 cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400'
-                                : isConfirmed
-                                ? 'bg-emerald-100/90 border-emerald-300 text-emerald-900 shadow-2xs hover:bg-emerald-200/80 ring-1 ring-emerald-400/40'
-                                : 'bg-white border-slate-300 text-slate-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50/50'
-                            }`}
-                            title={
-                              isCancelled
-                                ? 'Cancelled quote cannot be confirmed'
-                                : isConfirmed
-                                ? 'Quotation is confirmed (Click to view/edit details or unconfirm)'
-                                : 'Click to confirm this quotation and move to Job Cards'
-                            }
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isConfirmed}
+                          {isArchivedRevision ? (
+                            <div
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-slate-100/90 text-slate-500 text-xs font-semibold cursor-not-allowed shadow-2xs"
+                              title="This is an archived revision. It is locked and uneditable."
+                            >
+                              <Lock className="w-3.5 h-3.5 text-slate-400" />
+                              <span>Locked</span>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isCancelled) return;
+                                handleOpenConfirmationModal(q);
+                              }}
                               disabled={isCancelled}
-                              onChange={() => {}} // Click handled by button
-                              className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300 pointer-events-none accent-emerald-600"
-                            />
-                            <span className={isConfirmed ? 'font-bold text-emerald-950' : 'text-slate-700 font-medium'}>
-                              Confirmed
-                            </span>
-                          </button>
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${
+                                isCancelled
+                                  ? 'opacity-40 cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400'
+                                  : isConfirmed
+                                  ? 'bg-emerald-100/90 border-emerald-300 text-emerald-900 shadow-2xs hover:bg-emerald-200/80 ring-1 ring-emerald-400/40'
+                                  : 'bg-white border-slate-300 text-slate-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50/50'
+                              }`}
+                              title={
+                                isCancelled
+                                  ? 'Cancelled quote cannot be confirmed'
+                                  : isConfirmed
+                                  ? 'Quotation is confirmed (Click to view/edit details or unconfirm)'
+                                  : 'Click to confirm this quotation and move to Job Cards'
+                              }
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isConfirmed}
+                                disabled={isCancelled}
+                                onChange={() => {}} // Click handled by button
+                                className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300 pointer-events-none accent-emerald-600"
+                              />
+                              <span className={isConfirmed ? 'font-bold text-emerald-950' : 'text-slate-700 font-medium'}>
+                                Confirmed
+                              </span>
+                            </button>
+                          )}
                         </td>
 
                         {/* Quote Number Badge */}
                         <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
                           <div className="flex items-center gap-1.5 flex-wrap">
+                            {isArchivedRevision && (
+                              <span className="text-slate-400 font-mono text-sm select-none mr-0.5" title="Archived revision">↳</span>
+                            )}
                             <span
                               className={`font-mono font-bold text-xs sm:text-sm px-2 py-0.5 rounded border transition-colors ${
                                 isCancelled
                                   ? 'text-slate-500 bg-slate-200/90 border-slate-300 line-through'
                                   : isConfirmed
                                   ? 'text-emerald-950 bg-emerald-100 border-emerald-300 font-extrabold'
+                                  : isArchivedRevision
+                                  ? 'text-slate-700 bg-slate-200/70 border-slate-300'
                                   : 'text-[#7B1818] bg-red-50/80 border-red-200/60 group-hover:border-red-300'
                               }`}
                             >
                               {ref}
                             </span>
+                            {isArchivedRevision ? (
+                              <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 border border-slate-300 inline-flex items-center gap-1">
+                                <Lock className="w-2.5 h-2.5 text-slate-500" />
+                                {q.from?.rev || 'R-00'} (Archived)
+                              </span>
+                            ) : (
+                              <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-900 border border-blue-300">
+                                {q.from?.rev || 'REV-00'}
+                              </span>
+                            )}
                             {isCancelled && (
                               <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
                                 Cancelled
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-slate-400 font-mono mt-1">
-                            {q.from?.rev || 'REV-00'}
-                          </div>
+
+                          {/* Revision sub-details and revise action */}
+                          {isArchivedRevision ? (
+                            <div className="text-[11px] text-slate-500 font-medium mt-1">
+                              {q.supersededBy ? (
+                                <span>Superseded by <strong className="text-blue-700 font-mono">{q.supersededBy}</strong></span>
+                              ) : (
+                                <span>Previous locked revision</span>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 mt-1.5">
+                              {onReviseQuotation && !isCancelled && !isConfirmed && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setQuoteToRevise(q);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded transition-colors cursor-pointer shadow-2xs"
+                                  title={`Create a revision from ${q.from?.rev || 'R-00'} (clones to new revision, locks original)`}
+                                >
+                                  <GitBranch className="w-3 h-3 text-blue-600" />
+                                  <span>Revise</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           {isCancelled && q.cancellationReason && (
                             <div className="text-[11px] text-red-700/80 font-medium italic mt-1.5 flex items-start gap-1">
                               <Ban className="w-3 h-3 text-red-500 shrink-0 mt-0.5" />
@@ -2634,6 +2766,74 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Revision Modal: Confirm creating revision (e.g. R-00 -> R-01) */}
+      {quoteToRevise && (() => {
+        const curRev = quoteToRevise.from?.rev || 'R-00';
+        const nextRev = getNextRevisionCode(curRev);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 space-y-4">
+              <div className="flex items-start gap-3.5">
+                <div className="p-3 bg-blue-50 text-blue-700 rounded-xl border border-blue-200 shrink-0">
+                  <GitBranch className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 leading-tight">
+                    Create Revised Quotation
+                  </h3>
+                  <p className="text-xs text-slate-500 font-mono mt-0.5">
+                    {quoteToRevise.from?.refNo}
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5 text-xs text-slate-700">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <span className="text-slate-500">Current Quote:</span>
+                  <span className="font-mono font-bold bg-slate-200 text-slate-800 px-2 py-0.5 rounded text-xs flex items-center gap-1">
+                    <Lock className="w-3 h-3 text-slate-500" />
+                    {curRev} (Will become locked)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">New Revision:</span>
+                  <span className="font-mono font-bold bg-blue-100 text-blue-900 border border-blue-300 px-2.5 py-0.5 rounded text-xs">
+                    {nextRev} (Main editable quote)
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 pt-1 leading-relaxed">
+                  All glass specifications, sizes, client details, and rates will be copied to <strong className="text-blue-900">{nextRev}</strong>. The original <strong className="text-slate-800">{curRev}</strong> will move below {nextRev} in the dashboard as a locked archive.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setQuoteToRevise(null)}
+                  className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = quoteToRevise;
+                    setQuoteToRevise(null);
+                    if (onReviseQuotation) {
+                      onReviseQuotation(target);
+                    }
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <GitBranch className="w-3.5 h-3.5" />
+                  <span>Create {nextRev}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Overdue Delivery Timeline Warning Modal (Triggers every 3 hours for running jobs beyond timeline) */}
       {showOverdueModal && overdueRunningJobs.length > 0 && (

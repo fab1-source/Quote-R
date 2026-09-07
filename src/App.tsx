@@ -38,6 +38,7 @@ import {
   createNewQuotationWithNextRefAsync,
   loadQuotationsFromServer,
   duplicateQuotation,
+  createQuotationRevision,
   initializeSampleIfEmpty,
   flushPendingQuotationSave,
   STORAGE_KEY,
@@ -310,6 +311,30 @@ export default function App() {
     }
   };
 
+  // Create Revision handler (R-00 -> R-01, original is locked and uneditable, new R-01 opens for editing)
+  const handleCreateRevision = (sourceQuote: Quotation) => {
+    if (currentUser?.role === 'VIEWER' || currentUser?.role === 'PRODUCTION') {
+      showNotification('Access restricted: Only estimators and admins can create revisions.', 'warning');
+      return;
+    }
+    try {
+      const { originalQuote, newRevision, allQuotes } = createQuotationRevision(
+        sourceQuote,
+        currentUser?.username || 'ESTIMATOR'
+      );
+      setQuotations(allQuotes);
+      setQuotation(newRevision);
+      setActiveTab('edit');
+      setViewMode('portal');
+      showNotification(
+        `Created revision ${newRevision.from.rev} from ${originalQuote.from.rev}. Original ${originalQuote.from.rev} is now locked and uneditable.`,
+        'success'
+      );
+    } catch (err: any) {
+      showNotification(`Failed to create revision: ${err?.message || err}`, 'error');
+    }
+  };
+
   // Load sample quotation template
   const handleLoadSample = () => {
     if (currentUser?.role === 'VIEWER') {
@@ -552,6 +577,7 @@ export default function App() {
           onAddNewQuotation={handleAddNewQuotation}
           onOpenQuotation={handleOpenQuotation}
           onDuplicateQuotation={handleDuplicateQuotation}
+          onReviseQuotation={handleCreateRevision}
           onCancelQuotation={handleCancelQuotation}
           onConfirmQuotation={handleConfirmQuotation}
           onUnconfirmQuotation={handleUnconfirmQuotation}
@@ -566,7 +592,8 @@ export default function App() {
           onOpenDbStatus={() => setIsDbModalOpen(true)}
         />
       ) : (() => {
-        const isLocked = quotation.status === 'cancelled' || quotation.status === 'confirmed' || isViewerUser;
+        const isArchivedRevision = Boolean(quotation.isArchivedRevision || quotation.supersededBy || quotation.isLocked);
+        const isLocked = quotation.status === 'cancelled' || quotation.status === 'confirmed' || isViewerUser || isArchivedRevision;
 
         return (
           /* VIEW 2: QUOTATION PORTAL (BUILDER & DOCUMENT PREVIEW) */
@@ -599,6 +626,10 @@ export default function App() {
               onSaveCurrentQuote={!isLocked && !isProductionUser && !isViewerUser ? handleSaveCurrentQuote : undefined}
               glassSectionCount={quotation.glassSections.length}
               currentRefNo={quotation.from?.refNo}
+              currentRev={quotation.from?.rev}
+              isArchivedRevision={isArchivedRevision}
+              supersededBy={quotation.supersededBy}
+              onReviseQuotation={!isLocked && !isProductionUser && !isViewerUser && !isArchivedRevision ? () => handleCreateRevision(quotation) : undefined}
               clientName={quotation.client?.name}
               isCancelled={quotation.status === 'cancelled'}
               cancellationReason={quotation.cancellationReason}

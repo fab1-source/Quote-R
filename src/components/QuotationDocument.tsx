@@ -1,4 +1,5 @@
 import React from 'react';
+import { Lock } from 'lucide-react';
 import { Quotation, GlassSection } from '../types';
 import { InterglassLogo, InterglassLogoBanner } from './InterglassLogo';
 import { calculateSectionTotals, calculateQuotationTotals } from '../utils/calculations';
@@ -19,7 +20,8 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
 }) => {
   const isCancelled = quotation.status === 'cancelled';
   const isConfirmed = quotation.status === 'confirmed';
-  const isLocked = isCancelled || isConfirmed;
+  const isArchivedRevision = Boolean(quotation.isArchivedRevision || quotation.supersededBy);
+  const isLocked = isCancelled || isConfirmed || quotation.isLocked || isArchivedRevision;
   const isEditable = initialIsEditable && !isLocked;
 
   const { grandTotalQty, grandTotalSqm, totalAmountAED, vatAmountAED, totalWithVatAED } =
@@ -110,6 +112,29 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
               Confirmed: {new Date(quotation.confirmedAt).toLocaleDateString('en-GB')}
             </span>
           )}
+        </div>
+      )}
+
+      {/* Archived Revision Notice Banner */}
+      {isArchivedRevision && (
+        <div className="mb-3 bg-slate-100 border-2 border-slate-500 rounded p-2.5 text-slate-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 print:border-slate-500 print:bg-slate-100">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 font-mono font-bold text-xs uppercase px-2 py-0.5 bg-slate-700 text-white rounded shadow-2xs">
+              <Lock className="w-3 h-3" />
+              ARCHIVED REVISION ({quotation.from?.rev || 'R-00'})
+            </span>
+            <span className="text-[11px] font-medium text-slate-800">
+              This quotation version is <strong>locked and uneditable</strong>.
+              {quotation.supersededBy && (
+                <span className="ml-1 text-slate-900">
+                  Superseded by newer revision <span className="font-bold font-mono bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded border border-blue-300">{quotation.supersededBy}</span>.
+                </span>
+              )}
+            </span>
+          </div>
+          <span className="text-[10px] text-slate-600 font-mono font-semibold">
+            Status: Archived (Read-Only)
+          </span>
         </div>
       )}
 
@@ -441,38 +466,40 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
                   ) : (
                     <span>{section.description}</span>
                   )}
-                  {onOpenPasteModalForSection && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenPasteModalForSection(section)}
-                      className="print:hidden ml-2 px-2 py-0.5 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium cursor-pointer shadow-2xs"
-                    >
-                      Paste Excel
-                    </button>
-                  )}
                 </div>
               </div>
 
               {/* Items Table */}
-              <table className="w-full border-collapse text-[10px] sm:text-[11px] print:text-[9.5px]">
+              <table className="w-full table-fixed border-collapse text-[10px] sm:text-[11px] print:text-[9.5px]">
+                <colgroup>
+                  <col className="w-[5%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[7%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[17%]" />
+                  <col className="w-[22%]" />
+                </colgroup>
                 <thead className="bg-neutral-50/80 border-b border-black text-center font-bold">
                   <tr>
-                    <th className="w-10 border-r border-black py-1 px-1">S.No.</th>
-                    <th className="w-16 border-r border-black py-1 px-1">code</th>
-                    <th className="w-12 border-r border-black py-1 px-1">Qty</th>
-                    <th className="w-14 border-r border-black py-1 px-1">Width</th>
-                    <th className="w-14 border-r border-black py-1 px-1">Height</th>
-                    <th className="w-16 border-r border-black py-1 px-1">Per Sqm</th>
-                    <th className="w-18 border-r border-black py-1 px-1">Total sqm</th>
-                    <th className="w-20 border-r border-black py-1 px-1">Rate/ Sqm</th>
-                    <th className="w-28 py-1 px-1">Amount in AED</th>
+                    <th className="border-r border-black py-1 px-1">S.No.</th>
+                    <th className="border-r border-black py-1 px-1">code</th>
+                    <th className="border-r border-black py-1 px-1">Qty</th>
+                    <th className="border-r border-black py-1 px-1">Width</th>
+                    <th className="border-r border-black py-1 px-1">Height</th>
+                    <th className="border-r border-black py-1 px-1">Per Sqm</th>
+                    <th className="border-r border-black py-1 px-1">Total sqm</th>
+                    <th className="border-r border-black py-1 px-1">Rate/ Sqm</th>
+                    <th className="py-1 px-1">Amount in AED</th>
                   </tr>
                 </thead>
                 <tbody>
                   {section.items.length === 0 ? (
                     <tr className="border-b border-black">
                       <td colSpan={9} className="py-4 text-center text-neutral-400 italic">
-                        No glass sizes added yet for {section.sectionCode}. Paste from Excel or add rows.
+                        No glass sizes added yet for {section.sectionCode}. Add rows to continue.
                       </td>
                     </tr>
                   ) : (
@@ -526,7 +553,7 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
                     <td colSpan={2} className="border-r border-black text-center py-1 px-1">
                       TOTAL
                     </td>
-                    <td className="border-r border-black text-center py-1 px-1">
+                    <td className="border-r border-black text-center py-1 px-1 font-mono">
                       {totalQty}
                     </td>
                     <td className="border-r border-black"></td>
@@ -536,7 +563,7 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
                       {totalSqm.toFixed(2)}
                     </td>
                     <td className="border-r border-black"></td>
-                    <td className="text-right py-1 px-1 font-mono text-xs font-bold">
+                    <td className="text-right py-1 px-1 font-mono text-xs font-bold text-neutral-900">
                       {effectiveAmount > 0
                         ? effectiveAmount.toLocaleString('en-US', {
                             minimumFractionDigits: 2,
@@ -554,22 +581,34 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
 
       {/* 5. Grand Total & Summary Table */}
       <div className="border border-black my-2">
-        <table className="w-full border-collapse text-[11px] print:text-[10px]">
+        <table className="w-full table-fixed border-collapse text-[11px] print:text-[10px]">
+          <colgroup>
+            <col className="w-[5%]" />
+            <col className="w-[8%]" />
+            <col className="w-[7%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
+            <col className="w-[11%]" />
+            <col className="w-[17%]" />
+            <col className="w-[22%]" />
+          </colgroup>
           <tbody>
             <tr className="bg-neutral-100 font-bold border-b border-black">
-              <td className="px-3 py-1.5 border-r border-black uppercase text-blue-950 font-serif">
+              <td colSpan={2} className="border-r border-black text-center py-1.5 px-1 uppercase text-blue-950 font-serif">
                 GRAND TOTAL
               </td>
-              <td className="w-20 text-center px-2 py-1.5 border-r border-black font-bold text-blue-950">
+              <td className="border-r border-black text-center py-1.5 px-1 font-bold text-blue-950 font-mono">
                 {grandTotalQty}
               </td>
-              <td className="w-24 text-center px-2 py-1.5 border-r border-black font-bold text-blue-950 font-mono">
+              <td colSpan={3} className="border-r border-black"></td>
+              <td className="border-r border-black text-center py-1.5 px-1 font-bold text-blue-950 font-mono">
                 {grandTotalSqm.toFixed(2)}
               </td>
-              <td className="px-2 py-1.5 border-r border-black text-right text-xs">
+              <td className="border-r border-black text-right py-1.5 px-1 text-[10px] sm:text-xs">
                 TOTAL AMOUNT IN AED
               </td>
-              <td className="w-36 text-center px-3 py-1.5 font-bold font-mono text-xs">
+              <td className="text-right py-1.5 px-1 font-bold font-mono text-xs sm:text-sm text-neutral-900">
                 {totalAmountAED.toLocaleString('en-US', {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
@@ -579,7 +618,7 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
 
             {/* VAT Row */}
             <tr className="border-b border-black">
-              <td colSpan={3} rowSpan={2} className="px-3 py-2 align-middle border-r border-black bg-neutral-50/40">
+              <td colSpan={7} rowSpan={2} className="px-3 py-2 align-middle border-r border-black bg-neutral-50/40">
                 <div className="text-[10px] text-neutral-500 font-medium italic mb-0.5">
                   Amount in words:
                 </div>
@@ -587,10 +626,10 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
                   {amountInWords}
                 </div>
               </td>
-              <td className="px-2 py-1 border-r border-black text-right text-xs bg-neutral-50/50">
+              <td className="border-r border-black text-right py-1 px-1 text-[10px] sm:text-xs bg-neutral-50/50 font-semibold">
                 VAT @ {quotation.vatRatePercent ?? 5}%
               </td>
-              <td className="w-36 text-center px-3 py-1 font-bold font-mono text-xs">
+              <td className="text-right py-1 px-1 font-bold font-mono text-xs sm:text-sm">
                 {vatAmountAED.toLocaleString('en-US', {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
@@ -600,10 +639,10 @@ export const QuotationDocument: React.FC<QuotationDocumentProps> = ({
 
             {/* Total with VAT Row */}
             <tr className="bg-neutral-100 font-bold">
-              <td className="px-2 py-1.5 border-r border-black text-right text-xs text-[#8A1515]">
+              <td className="border-r border-black text-right py-1.5 px-1 text-[10px] sm:text-xs text-[#8A1515]">
                 TOTAL AMOUNT WITH VAT IN AED
               </td>
-              <td className="w-36 text-center px-3 py-1.5 font-black font-mono text-sm text-[#8A1515]">
+              <td className="text-right py-1.5 px-1 font-black font-mono text-xs sm:text-sm text-[#8A1515]">
                 {totalWithVatAED.toLocaleString('en-US', {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,

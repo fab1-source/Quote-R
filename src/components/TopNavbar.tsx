@@ -18,7 +18,9 @@ import {
   LogOut,
   Shield,
   UserCheck,
-  Database
+  Database,
+  GitBranch,
+  Lock
 } from 'lucide-react';
 import { InterglassEmblem } from './InterglassLogo';
 import { UserAccount } from '../types';
@@ -40,6 +42,10 @@ interface TopNavbarProps {
   onSaveCurrentQuote?: () => void;
   glassSectionCount: number;
   currentRefNo?: string;
+  currentRev?: string;
+  isArchivedRevision?: boolean;
+  supersededBy?: string;
+  onReviseQuotation?: () => void;
   clientName?: string;
   isCancelled?: boolean;
   cancellationReason?: string;
@@ -68,6 +74,10 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   onSaveCurrentQuote,
   glassSectionCount,
   currentRefNo,
+  currentRev,
+  isArchivedRevision = false,
+  supersededBy,
+  onReviseQuotation,
   clientName,
   isCancelled = false,
   cancellationReason,
@@ -80,7 +90,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   onOpenDbStatus,
 }) => {
   const isViewer = currentUser?.role === 'VIEWER';
-  const isLocked = isCancelled || isConfirmed || isViewer;
+  const isLocked = isCancelled || isConfirmed || isViewer || isArchivedRevision;
   const isProduction = currentUser?.role === 'PRODUCTION';
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm print:hidden">
@@ -107,17 +117,30 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           <div>
             <div className="flex items-center gap-1.5 flex-wrap">
               {currentRefNo ? (
-                <span className={`font-mono font-bold text-xs sm:text-sm px-2.5 py-1 rounded border ${
+                <span className={`font-mono font-bold text-xs sm:text-sm px-2.5 py-1 rounded border inline-flex items-center gap-1.5 ${
                   isCancelled 
                     ? 'text-red-700 bg-red-100/70 border-red-300' 
+                    : isArchivedRevision
+                    ? 'text-slate-700 bg-slate-100 border-slate-300'
                     : 'text-[#7B1818] bg-red-50 border-red-200'
                 }`}>
                   {currentRefNo}
+                  {currentRev && (
+                    <span className="font-bold text-blue-900 bg-blue-100 px-1.5 py-0.2 rounded text-[10px] sm:text-[11px] border border-blue-200">
+                      {currentRev}
+                    </span>
+                  )}
                 </span>
               ) : (
                 <h1 className="text-sm font-bold text-slate-900 leading-tight">
                   Interglass
                 </h1>
+              )}
+              {isArchivedRevision && (
+                <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-slate-700 text-white shadow-xs">
+                  <Lock className="w-3 h-3" />
+                  Archived (Locked)
+                </span>
               )}
               {isCancelled && (
                 <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-red-600 text-white shadow-xs">
@@ -197,6 +220,19 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 
         {/* Right: Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* REVISE QUOTE BUTTON: Create revision (e.g. R-00 -> R-01), locks current, clones to new */}
+          {onReviseQuotation && !isProduction && (
+            <button
+              type="button"
+              onClick={onReviseQuotation}
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              title="Create a new revision (e.g. R-00 becomes R-01). The original becomes locked and uneditable."
+            >
+              <GitBranch className="w-3.5 h-3.5 text-white" />
+              <span>Revise Quote</span>
+            </button>
+          )}
+
           {/* Quick Save button - hidden if locked or production */}
           {!isLocked && !isProduction && onSaveCurrentQuote && (
             <button
