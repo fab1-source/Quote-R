@@ -224,6 +224,42 @@ export function cancelQuotation(id: string, reason: string): Quotation[] {
   return updatedList;
 }
 
+/**
+ * Reactivates / un-cancels a previously cancelled quotation back to active draft status.
+ */
+export function uncancelQuotation(id: string): Quotation[] {
+  const currentList = getSavedQuotations();
+  const now = new Date().toISOString();
+  let changedQuote: Quotation | null = null;
+
+  const updatedList = currentList.map((q) => {
+    if (q.id === id) {
+      const u: Quotation = {
+        ...q,
+        status: 'active' as const,
+        cancellationReason: undefined,
+        cancelledAt: undefined,
+        updatedAt: now,
+      };
+      changedQuote = u;
+      return u;
+    }
+    return q;
+  });
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
+  } catch (error) {
+    console.error('Failed to uncancel quotation in storage', error);
+  }
+
+  if (changedQuote) {
+    saveQuotationApi(changedQuote).catch((err) => console.warn('Uncancel server sync error:', err));
+  }
+
+  return updatedList;
+}
+
 export interface ConfirmationDetails {
   clientName: string;
   salesmanName: string;
@@ -288,6 +324,41 @@ export function confirmQuotation(id: string, details: ConfirmationDetails): Quot
 }
 
 /**
+ * Updates the salesman assigned to a quotation or confirmed order.
+ * Accessible to ADMIN for all orders (active, confirmed, etc.).
+ */
+export function updateQuotationSalesman(id: string, salesmanName: string): Quotation[] {
+  const currentList = getSavedQuotations();
+  const now = new Date().toISOString();
+  let changedQuote: Quotation | null = null;
+
+  const updatedList = currentList.map((q) => {
+    if (q.id === id) {
+      const u: Quotation = {
+        ...q,
+        salesmanName: salesmanName.trim(),
+        updatedAt: now,
+      };
+      changedQuote = u;
+      return u;
+    }
+    return q;
+  });
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
+  } catch (error) {
+    console.error('Failed to update salesman in storage', error);
+  }
+
+  if (changedQuote) {
+    saveQuotationApi(changedQuote).catch((err) => console.warn('Update salesman server sync error:', err));
+  }
+
+  return updatedList;
+}
+
+/**
  * Updates Job Card flags such as isCompleted, isInvoiced, committedDeliveryDate, or factoryComments.
  */
 export function updateJobCardFlags(
@@ -297,6 +368,9 @@ export function updateJobCardFlags(
     isInvoiced?: boolean;
     committedDeliveryDate?: string;
     factoryComments?: string;
+    coordinatorRemarks?: string;
+    coordinatorRemarksUpdatedAt?: string;
+    coordinatorRemarksAuthor?: string;
   }
 ): Quotation[] {
   const currentList = getSavedQuotations();
@@ -324,6 +398,46 @@ export function updateJobCardFlags(
 
   if (changedQuote) {
     saveQuotationApi(changedQuote).catch((err) => console.warn('Job card server sync error:', err));
+  }
+
+  return updatedList;
+}
+
+/**
+ * Updates follow-up remarks entered by the Quotation Coordinator or Admin.
+ */
+export function updateCoordinatorRemarks(
+  id: string,
+  remarks: string,
+  author?: string
+): Quotation[] {
+  const currentList = getSavedQuotations();
+  const now = new Date().toISOString();
+  let changedQuote: Quotation | null = null;
+
+  const updatedList = currentList.map((q) => {
+    if (q.id === id) {
+      const u: Quotation = {
+        ...q,
+        coordinatorRemarks: remarks,
+        coordinatorRemarksUpdatedAt: now,
+        coordinatorRemarksAuthor: author || 'COORDINATOR1',
+        updatedAt: now,
+      };
+      changedQuote = u;
+      return u;
+    }
+    return q;
+  });
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
+  } catch (error) {
+    console.error('Failed to update coordinator remarks in storage', error);
+  }
+
+  if (changedQuote) {
+    saveQuotationApi(changedQuote).catch((err) => console.warn('Coordinator remarks server sync error:', err));
   }
 
   return updatedList;

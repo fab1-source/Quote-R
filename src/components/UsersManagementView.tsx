@@ -217,50 +217,51 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
         </button>
       </div>
 
-      {/* 4 Access Control Levels Guide */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 5 Access Control Levels Guide */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         {/* ADMIN */}
-        <div className="bg-red-50/70 border border-red-200 rounded-xl p-4 text-xs">
+        <div className="bg-red-50/70 border border-red-200 rounded-xl p-3.5 text-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="px-2 py-0.5 rounded bg-red-700 text-white font-bold text-[10px] tracking-wider uppercase">
               ADMIN Level
             </span>
             <span className="font-bold text-red-900">Full Access</span>
           </div>
-          <p className="text-red-900 font-medium leading-relaxed">
+          <p className="text-red-900 font-medium leading-relaxed text-[11px]">
             • Complete access to all portal features.<br />
             • Can <strong>confirm</strong> AND <strong>unconfirm</strong> orders.<br />
             • Can toggle Invoiced status (check & uncheck).<br />
-            • Exclusive access to <strong>"Users"</strong> tab to manage accounts and passwords.
+            • Can view & edit <strong>Follow-up Remarks</strong>.<br />
+            • Exclusive access to <strong>"Users"</strong> tab.
           </p>
         </div>
 
         {/* ESTIMATION */}
-        <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-4 text-xs">
+        <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3.5 text-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="px-2 py-0.5 rounded bg-blue-700 text-white font-bold text-[10px] tracking-wider uppercase">
               ESTIMATION Level
             </span>
             <span className="font-bold text-blue-900">Quoting & Costing</span>
           </div>
-          <p className="text-blue-900 font-medium leading-relaxed">
+          <p className="text-blue-900 font-medium leading-relaxed text-[11px]">
             • Access to Quotations Portal, Cost Sheet, and Job Cards.<br />
             • Can <strong>confirm</strong> an order.<br />
             • <strong>Cannot un-confirm</strong> orders.<br />
             • <strong>Cannot toggle Invoiced</strong>.<br />
-            • "Users" tab is hidden.
+            • Remarks column hidden.
           </p>
         </div>
 
         {/* PRODUCTION */}
-        <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 text-xs">
+        <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 text-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="px-2 py-0.5 rounded bg-emerald-700 text-white font-bold text-[10px] tracking-wider uppercase">
               PRODUCTION Level
             </span>
             <span className="font-bold text-emerald-900">Job Cards Only</span>
           </div>
-          <p className="text-emerald-900 font-medium leading-relaxed">
+          <p className="text-emerald-900 font-medium leading-relaxed text-[11px]">
             • <strong>Strictly JOB CARDS tab only</strong>.<br />
             • No access to financial amounts or commercial terms.<br />
             • Can mark as <strong>Invoiced</strong>.<br />
@@ -268,19 +269,35 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
           </p>
         </div>
 
+        {/* COORDINATOR */}
+        <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 text-xs">
+          <div className="flex items-center justify-between mb-2">
+            <span className="px-2 py-0.5 rounded bg-amber-700 text-white font-bold text-[10px] tracking-wider uppercase">
+              COORDINATOR Level
+            </span>
+            <span className="font-bold text-amber-900">Follow-up & Remarks</span>
+          </div>
+          <p className="text-amber-900 font-medium leading-relaxed text-[11px]">
+            • Can see all quotations and job cards.<br />
+            • <strong>Strictly read-only mode</strong> (cannot change quote details).<br />
+            • Can view and enter <strong>Follow-up Remarks</strong> on every quote.<br />
+            • "Users" tab is hidden.
+          </p>
+        </div>
+
         {/* VIEWER */}
-        <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-4 text-xs">
+        <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-3.5 text-xs">
           <div className="flex items-center justify-between mb-2">
             <span className="px-2 py-0.5 rounded bg-purple-700 text-white font-bold text-[10px] tracking-wider uppercase">
               VIEWER Level
             </span>
             <span className="font-bold text-purple-900">Read-Only Audit</span>
           </div>
-          <p className="text-purple-900 font-medium leading-relaxed">
+          <p className="text-purple-900 font-medium leading-relaxed text-[11px]">
             • Can view and open quotations and job cards.<br />
-            • <strong>Strictly read-only mode</strong> throughout the portal.<br />
-            • Cannot edit, create, confirm, or modify anything.<br />
-            • "Users" tab is hidden.
+            • <strong>Strictly read-only audit mode</strong>.<br />
+            • Remarks column hidden.<br />
+            • Cannot edit or modify anything.
           </p>
         </div>
       </div>
@@ -338,6 +355,8 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
                               ? 'bg-blue-100 text-blue-800 border border-blue-300'
                               : user.role === 'PRODUCTION'
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : user.role === 'COORDINATOR'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
                               : 'bg-purple-100 text-purple-800 border border-purple-300'
                           }`}
                         >
@@ -372,12 +391,15 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
                               ? 'bg-blue-50 text-blue-800 border-blue-300'
                               : user.role === 'PRODUCTION'
                               ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                              : user.role === 'COORDINATOR'
+                              ? 'bg-amber-50 text-amber-800 border-amber-300'
                               : 'bg-purple-50 text-purple-800 border-purple-300'
                           }`}
                         >
                           <option value="ADMIN">ADMIN</option>
                           <option value="ESTIMATION">ESTIMATION</option>
                           <option value="PRODUCTION">PRODUCTION</option>
+                          <option value="COORDINATOR">COORDINATOR</option>
                           <option value="VIEWER">VIEWER</option>
                         </select>
                       </div>
@@ -388,6 +410,8 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
                           ? 'Can confirm, cannot unconfirm, cannot invoice'
                           : user.role === 'PRODUCTION'
                           ? 'Job Cards only • Can invoice, cannot uncheck'
+                          : user.role === 'COORDINATOR'
+                          ? 'Follow up all quotations & add remarks • Read-only'
                           : 'Read-only audit view of quotations & job cards'}
                       </div>
                     </td>
@@ -666,6 +690,35 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({
                       </div>
                       <div className="text-slate-500 text-[11px] mt-0.5">
                         Strictly Job Cards tab only. Can mark invoiced (cannot uncheck). No access to pricing, cost sheets, or users.
+                      </div>
+                    </div>
+                  </label>
+
+                  {/* COORDINATOR */}
+                  <label
+                    className={`p-3 rounded-lg border cursor-pointer transition flex items-start gap-3 ${
+                      newRole === 'COORDINATOR'
+                        ? 'bg-amber-50/80 border-amber-400 ring-1 ring-amber-400'
+                        : 'bg-slate-50 hover:bg-slate-100/70 border-slate-200'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="userRole"
+                      value="COORDINATOR"
+                      checked={newRole === 'COORDINATOR'}
+                      onChange={() => setNewRole('COORDINATOR')}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                        <span className="px-1.5 py-0.5 rounded bg-amber-700 text-white text-[10px] font-bold uppercase">
+                          COORDINATOR
+                        </span>
+                        <span>Follow-up & Remarks</span>
+                      </div>
+                      <div className="text-slate-500 text-[11px] mt-0.5">
+                        Can see all quotations and job cards in read-only mode. Enter follow-up remarks on every quote.
                       </div>
                     </div>
                   </label>

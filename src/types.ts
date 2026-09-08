@@ -76,6 +76,9 @@ export interface Quotation {
   isCompleted?: boolean;
   isInvoiced?: boolean;
   factoryComments?: string;
+  coordinatorRemarks?: string; // Follow-up remarks by Quotation Coordinator
+  coordinatorRemarksUpdatedAt?: string;
+  coordinatorRemarksAuthor?: string;
   client: ClientInfo;
   from: FromInfo;
   scopeOfWork: string;
@@ -88,9 +91,31 @@ export interface Quotation {
   comments: string;
   termsAndConditions: string[];
   bankDetails: BankDetails;
+  costSheetData?: CostSheetData;
 }
 
-export type UserRole = 'ADMIN' | 'ESTIMATION' | 'PRODUCTION' | 'VIEWER';
+export interface CostSheetItem {
+  id: string;
+  type: 'glass' | 'service';
+  description: string; // e.g. "6mm HD Grey-3210 x 2250" or "Temper"
+  actual: string; // e.g. "12 Sheets" or blank
+  actualSheets?: number; // e.g. 12
+  qty: number; // e.g. 13 (sheets) or 71.85 (sqm)
+  sheetWidthMm?: number; // default 3210
+  sheetHeightMm?: number; // default 2250
+  pricePerSqm: number; // e.g. 49.00 or 10.00
+  cuttingCharge: number; // e.g. 15.00 per sheet (or 0 for service)
+  total: number; // calculated total in AED
+}
+
+export interface CostSheetData {
+  items: CostSheetItem[];
+  marginPercent: number; // default 15.00%
+  notes?: string;
+  lastUpdated?: string;
+}
+
+export type UserRole = 'ADMIN' | 'ESTIMATION' | 'PRODUCTION' | 'VIEWER' | 'COORDINATOR';
 
 export interface UserAccount {
   id: string;

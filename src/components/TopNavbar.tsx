@@ -90,7 +90,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   onOpenDbStatus,
 }) => {
   const isViewer = currentUser?.role === 'VIEWER';
-  const isLocked = isCancelled || isConfirmed || isViewer || isArchivedRevision;
+  const isCoordinator = currentUser?.role === 'COORDINATOR';
+  const isLocked = isCancelled || isConfirmed || isViewer || isCoordinator || isArchivedRevision;
   const isProduction = currentUser?.role === 'PRODUCTION';
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm print:hidden">
@@ -156,7 +157,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           </div>
         </div>
 
-        {/* Center: Primary Portal Tabs & Sub-view Switcher */}
+        {/* Center: Preview / Edit Toggle or Production Status */}
         <div className="flex items-center gap-2">
           {isProduction ? (
             <div className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-lg text-xs font-bold shadow-2xs">
@@ -167,72 +168,25 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
               </span>
             </div>
           ) : (
-            <>
-              {/* Primary Tabs: Quotations Portal vs COST SHEET */}
-              <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setPortalTab && setPortalTab('quotations')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                    portalTab === 'quotations'
-                      ? 'bg-white text-[#7B1818] shadow-xs font-bold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                  title="Quotation Builder & Documents"
-                >
-                  <FileText className="w-3.5 h-3.5 text-[#7B1818]" />
-                  <span>Quotations Portal</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPortalTab && setPortalTab('cost_sheet')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer ${
-                    portalTab === 'cost_sheet'
-                      ? 'bg-white text-indigo-700 shadow-xs font-bold'
-                      : 'text-slate-600 hover:text-indigo-700'
-                  }`}
-                  title="Internal Estimation Cost Sheet & Profit Margins"
-                >
-                  <Calculator className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>COST SHEET</span>
-                </button>
-              </div>
-
-              {/* Quotation Preview button */}
-              {portalTab === 'quotations' && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab(activeTab === 'preview' ? 'edit' : 'preview')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition cursor-pointer ${
-                    activeTab === 'preview'
-                      ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                      : 'bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border-slate-200 shadow-2xs'
-                  }`}
-                  title={activeTab === 'preview' ? 'Return to Quotation Editor' : 'Quotation Preview'}
-                >
-                  <Eye className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Quotation Preview</span>
-                </button>
-              )}
-            </>
+            /* Quotation Preview button */
+            <button
+              type="button"
+              onClick={() => setActiveTab(activeTab === 'preview' ? 'edit' : 'preview')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition cursor-pointer ${
+                activeTab === 'preview'
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                  : 'bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border-slate-200 shadow-2xs'
+              }`}
+              title={activeTab === 'preview' ? 'Return to Quotation Editor' : 'Quotation Preview'}
+            >
+              <Eye className="w-3.5 h-3.5 text-slate-500" />
+              <span>{activeTab === 'preview' ? 'Back to Editor' : 'Quotation Preview'}</span>
+            </button>
           )}
         </div>
 
         {/* Right: Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* REVISE QUOTE BUTTON: Create revision (e.g. R-00 -> R-01), locks current, clones to new */}
-          {onReviseQuotation && !isProduction && (
-            <button
-              type="button"
-              onClick={onReviseQuotation}
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-              title="Create a new revision (e.g. R-00 becomes R-01). The original becomes locked and uneditable."
-            >
-              <GitBranch className="w-3.5 h-3.5 text-white" />
-              <span>Revise Quote</span>
-            </button>
-          )}
-
           {/* Quick Save button - hidden if locked or production */}
           {!isLocked && !isProduction && onSaveCurrentQuote && (
             <button
@@ -300,6 +254,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                     ? 'bg-blue-700'
                     : currentUser.role === 'PRODUCTION'
                     ? 'bg-emerald-700'
+                    : currentUser.role === 'COORDINATOR'
+                    ? 'bg-amber-700'
                     : 'bg-purple-700'
                 }`}
                 title={`${currentUser.username} (${currentUser.role})`}
@@ -324,6 +280,18 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
           )}
         </div>
       </div>
+
+      {/* Coordinator Banner underneath navbar */}
+      {isCoordinator && !isCancelled && !isConfirmed && (
+        <div className="bg-amber-50 border-t border-amber-200 px-4 py-2 text-center text-xs text-amber-900 flex items-center justify-center gap-2">
+          <span className="font-bold uppercase tracking-wider bg-amber-700 text-white text-[10px] px-1.5 py-0.5 rounded">
+            Coordinator Portal
+          </span>
+          <span>
+            Follow-up & Remarks Inspection: Viewing quotation specifications and pricing in read-only mode.
+          </span>
+        </div>
+      )}
 
       {/* Viewer Banner underneath navbar */}
       {isViewer && !isCancelled && !isConfirmed && (

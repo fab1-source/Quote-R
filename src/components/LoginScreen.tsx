@@ -193,6 +193,26 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 </span>
               </button>
 
+              {/* COORDINATOR - COORDINATOR1 */}
+              <button
+                type="button"
+                onClick={() => handleSelectUsername('COORDINATOR1')}
+                className="w-full p-2.5 rounded-lg border border-amber-200 bg-amber-50/60 hover:bg-amber-100/70 text-left transition flex items-center justify-between group cursor-pointer"
+              >
+                <div>
+                  <div className="font-bold text-amber-950 flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 rounded bg-amber-700 text-white text-[10px] font-extrabold uppercase">
+                      COORDINATOR
+                    </span>
+                    <span className="font-mono font-bold">COORDINATOR1</span>
+                  </div>
+                  <div className="text-[11px] text-amber-800 mt-0.5">Follow up all quotations & add remarks • Read-only portal</div>
+                </div>
+                <span className="text-amber-700 text-xs font-semibold opacity-0 group-hover:opacity-100 transition">
+                  Select &rarr;
+                </span>
+              </button>
+
               {/* VIEWER - AUDIT1 */}
               <button
                 type="button"

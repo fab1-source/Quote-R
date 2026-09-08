@@ -30,8 +30,10 @@ import {
   getSavedQuotations,
   saveQuotation,
   cancelQuotation,
+  uncancelQuotation,
   confirmQuotation,
   unconfirmQuotation,
+  updateQuotationSalesman,
   updateJobCardFlags,
   ConfirmationDetails,
   createNewQuotationWithNextRef,
@@ -39,6 +41,7 @@ import {
   loadQuotationsFromServer,
   duplicateQuotation,
   createQuotationRevision,
+  updateCoordinatorRemarks,
   initializeSampleIfEmpty,
   flushPendingQuotationSave,
   STORAGE_KEY,
@@ -57,6 +60,7 @@ import { GlassSectionCard } from './components/GlassSectionCard';
 import { QuotationDocument } from './components/QuotationDocument';
 import { JobCardDocument } from './components/JobCardDocument';
 import { CostSheetView } from './components/CostSheetView';
+import { CostSheetTable } from './components/CostSheetTable';
 import { SavedQuotationsModal } from './components/SavedQuotationsModal';
 import { PasteExcelModal } from './components/PasteExcelModal';
 import { DatabaseStatusModal } from './components/DatabaseStatusModal';
@@ -145,8 +149,8 @@ export default function App() {
 
   // Sync quotation changes into local storage automatically
   const updateQuotationAndStorage = (updater: (prev: Quotation) => Quotation) => {
-    if (currentUser?.role === 'VIEWER') {
-      showNotification('Read-only mode: Modifications are disabled for viewers.', 'warning');
+    if (currentUser?.role === 'VIEWER' || currentUser?.role === 'COORDINATOR') {
+      showNotification('Read-only mode: Modifications are disabled for your user role.', 'warning');
       return;
     }
     setQuotation((prev) => {
@@ -163,8 +167,8 @@ export default function App() {
 
   // DASHBOARD ACTION: Add New Quotation with atomic consecutive reference from Centralized DB
   const handleAddNewQuotation = async () => {
-    if (currentUser?.role === 'VIEWER') {
-      showNotification('Access restricted: Viewers cannot create new quotations.', 'warning');
+    if (currentUser?.role === 'VIEWER' || currentUser?.role === 'COORDINATOR') {
+      showNotification('Access restricted: Coordinators and viewers have read-only access and cannot create quotations.', 'warning');
       return;
     }
     try {
@@ -212,6 +216,9 @@ export default function App() {
     if (currentUser?.role === 'PRODUCTION') {
       setActiveTab('job_card');
       setPortalTab('quotations');
+    } else if (currentUser?.role === 'COORDINATOR' || currentUser?.role === 'VIEWER') {
+      setActiveTab('preview');
+      setPortalTab(targetPortalTab);
     } else {
       setActiveTab(tab);
       setPortalTab(targetPortalTab);
@@ -221,8 +228,8 @@ export default function App() {
 
   // DASHBOARD ACTION: Duplicate quote with next serial
   const handleDuplicateQuotation = (id: string) => {
-    if (currentUser?.role === 'VIEWER') {
-      showNotification('Access restricted: Viewers cannot duplicate quotations.', 'warning');
+    if (currentUser?.role === 'VIEWER' || currentUser?.role === 'COORDINATOR') {
+      showNotification('Access restricted: Coordinators and viewers cannot duplicate quotations.', 'warning');
       return;
     }
     const { newQuotation, allQuotes } = duplicateQuotation(id);
@@ -230,10 +237,10 @@ export default function App() {
     showNotification(`Duplicated as ${newQuotation.from.refNo}`, 'success');
   };
 
-  // DASHBOARD ACTION: Cancel quote
+  // DASHBOARD ACTION: Cancel quote (Accessible to Coordinator and Admin)
   const handleCancelQuotation = (id: string, reason: string) => {
-    if (currentUser?.role === 'VIEWER') {
-      showNotification('Access restricted: Viewers cannot cancel quotations.', 'warning');
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'COORDINATOR') {
+      showNotification('Access restricted: Only coordinators and administrators can cancel quotations.', 'warning');
       return;
     }
     const target = quotations.find((q) => q.id === id);
@@ -246,13 +253,32 @@ export default function App() {
         setQuotation(updatedQuote);
       }
     }
-    showNotification(`Cancelled quotation ${ref} and locked reference`, 'info');
+    showNotification(`Cancelled quotation ${ref} and removed from pipeline value`, 'info');
+  };
+
+  // DASHBOARD ACTION: Reactivate / Uncancel quote
+  const handleUncancelQuotation = (id: string) => {
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'COORDINATOR') {
+      showNotification('Access restricted: Only coordinators and administrators can reactivate quotations.', 'warning');
+      return;
+    }
+    const target = quotations.find((q) => q.id === id);
+    const ref = target?.from?.refNo || 'this quotation';
+    const updated = uncancelQuotation(id);
+    setQuotations(updated);
+    if (quotation.id === id) {
+      const updatedQuote = updated.find((q) => q.id === id);
+      if (updatedQuote) {
+        setQuotation(updatedQuote);
+      }
+    }
+    showNotification(`Reactivated quotation ${ref} to active pipeline`, 'success');
   };
 
   // DASHBOARD ACTION: Confirm quote
   const handleConfirmQuotation = (id: string, details: ConfirmationDetails) => {
-    if (currentUser?.role === 'VIEWER') {
-      showNotification('Access restricted: Viewers cannot confirm quotations.', 'warning');
+    if (currentUser?.role === 'VIEWER' || currentUser?.role === 'COORDINATOR') {
+      showNotification('Access restricted: Coordinators and viewers cannot confirm quotations.', 'warning');
       return;
     }
     const target = quotations.find((q) => q.id === id);
@@ -270,8 +296,8 @@ export default function App() {
 
   // DASHBOARD ACTION: Unconfirm quote
   const handleUnconfirmQuotation = (id: string) => {
-    if (currentUser?.role === 'VIEWER') {
-      showNotification('Access restricted: Viewers cannot unconfirm quotations.', 'warning');
+    if (currentUser?.role === 'VIEWER' || currentUser?.role === 'COORDINATOR') {
+      showNotification('Access restricted: Coordinators and viewers cannot unconfirm quotations.', 'warning');
       return;
     }
     const target = quotations.find((q) => q.id === id);
@@ -297,8 +323,8 @@ export default function App() {
       factoryComments?: string;
     }
   ) => {
-    if (currentUser?.role === 'VIEWER') {
-      showNotification('Access restricted: Viewers cannot modify job cards.', 'warning');
+    if (currentUser?.role === 'VIEWER' || currentUser?.role === 'COORDINATOR') {
+      showNotification('Access restricted: Coordinators and viewers have read-only view of job cards.', 'warning');
       return;
     }
     const updated = updateJobCardFlags(id, updates);
@@ -311,9 +337,26 @@ export default function App() {
     }
   };
 
+  // DASHBOARD ACTION: Update Follow-up Remarks for Coordinator and Admin
+  const handleUpdateCoordinatorRemarks = (id: string, remarks: string, author?: string) => {
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'COORDINATOR') {
+      showNotification('Access restricted: Only coordinators and administrators can record follow-up remarks.', 'warning');
+      return;
+    }
+    const updated = updateCoordinatorRemarks(id, remarks, author || currentUser?.username || 'COORDINATOR1');
+    setQuotations(updated);
+    if (quotation.id === id) {
+      const updatedQuote = updated.find((q) => q.id === id);
+      if (updatedQuote) {
+        setQuotation(updatedQuote);
+      }
+    }
+    showNotification('Saved quotation follow-up remark', 'success');
+  };
+
   // Create Revision handler (R-00 -> R-01, original is locked and uneditable, new R-01 opens for editing)
   const handleCreateRevision = (sourceQuote: Quotation) => {
-    if (currentUser?.role === 'VIEWER' || currentUser?.role === 'PRODUCTION') {
+    if (currentUser?.role === 'VIEWER' || currentUser?.role === 'PRODUCTION' || currentUser?.role === 'COORDINATOR') {
       showNotification('Access restricted: Only estimators and admins can create revisions.', 'warning');
       return;
     }
@@ -543,6 +586,7 @@ export default function App() {
   const isProductionUser = currentUser.role === 'PRODUCTION';
   const isAdminUser = currentUser.role === 'ADMIN';
   const isViewerUser = currentUser.role === 'VIEWER';
+  const isCoordinatorUser = currentUser.role === 'COORDINATOR';
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans">
@@ -579,6 +623,7 @@ export default function App() {
           onDuplicateQuotation={handleDuplicateQuotation}
           onReviseQuotation={handleCreateRevision}
           onCancelQuotation={handleCancelQuotation}
+          onUncancelQuotation={handleUncancelQuotation}
           onConfirmQuotation={handleConfirmQuotation}
           onUnconfirmQuotation={handleUnconfirmQuotation}
           onLoadSample={handleLoadSample}
@@ -588,12 +633,13 @@ export default function App() {
           onLogout={handleLogout}
           onNotification={showNotification}
           onUpdateJobCardFlags={handleUpdateJobCardFlags}
+          onUpdateCoordinatorRemarks={handleUpdateCoordinatorRemarks}
           dbStatus={dbStatus}
           onOpenDbStatus={() => setIsDbModalOpen(true)}
         />
       ) : (() => {
         const isArchivedRevision = Boolean(quotation.isArchivedRevision || quotation.supersededBy || quotation.isLocked);
-        const isLocked = quotation.status === 'cancelled' || quotation.status === 'confirmed' || isViewerUser || isArchivedRevision;
+        const isLocked = quotation.status === 'cancelled' || quotation.status === 'confirmed' || isViewerUser || isCoordinatorUser || isArchivedRevision;
 
         return (
           /* VIEW 2: QUOTATION PORTAL (BUILDER & DOCUMENT PREVIEW) */
@@ -682,30 +728,76 @@ export default function App() {
                 </div>
               ) : (
                 <>
-                  {/* 2nd Tab: COST SHEET View */}
-                  {portalTab === 'cost_sheet' ? (
-                    <CostSheetView
-                      quotation={quotation}
-                      isLocked={isLocked}
-                      onBackToQuotation={() => setPortalTab('quotations')}
-                    />
-                  ) : (
-                    /* 1st Tab: Quotations Portal */
-                    <>
-                      {activeTab === 'edit' ? (
-                        <div className="space-y-6">
-                  {/* Header: Client TO & Interglass FROM info */}
-                  <CompanyAndClientCard
-                    quotation={quotation}
-                    readOnly={isLocked}
-                    onUpdateQuotation={(updated) => {
-                      if (isLocked) return;
-                      updateQuotationAndStorage(() => updated);
-                    }}
-                  />
+                  {activeTab === 'edit' ? (
+                    <div className="space-y-6">
+                      {/* Header: Client TO & Interglass FROM info */}
+                      <CompanyAndClientCard
+                        quotation={quotation}
+                        readOnly={isLocked}
+                        onUpdateQuotation={(updated) => {
+                          if (isLocked) return;
+                          updateQuotationAndStorage(() => updated);
+                        }}
+                      />
 
-                  {/* Glass Sections List */}
-                  <div className="space-y-4">
+                      {/* 2 Primary Tabs: Main Quote & COST SHEET (as requested in 4.jpg) */}
+                      <div className="bg-white border border-slate-200 rounded-xl p-1.5 shadow-2xs">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            id="tab-main-quote"
+                            onClick={() => setPortalTab('quotations')}
+                            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                              portalTab === 'quotations'
+                                ? 'bg-[#7B1818] text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                            }`}
+                          >
+                            <FileText className="w-4 h-4" />
+                            <span>Main Quote</span>
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${
+                              portalTab === 'quotations' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {quotation.glassSections.length} Sections
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            id="tab-cost-sheet"
+                            onClick={() => setPortalTab('cost_sheet')}
+                            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                              portalTab === 'cost_sheet'
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-indigo-700 hover:bg-indigo-50/50'
+                            }`}
+                          >
+                            <Calculator className="w-4 h-4" />
+                            <span>COST SHEET</span>
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${
+                              portalTab === 'cost_sheet' ? 'bg-white/20 text-white' : 'bg-indigo-100 text-indigo-800'
+                            }`}>
+                              Internal Estimation & Margins
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Sub-tab view: If COST SHEET is active, render CostSheetTable. Otherwise, render Glass Specifications */}
+                      {portalTab === 'cost_sheet' ? (
+                        <CostSheetTable
+                          quotation={quotation}
+                          readOnly={isLocked}
+                          onUpdateQuotation={(updated) => {
+                            if (isLocked) return;
+                            updateQuotationAndStorage(() => updated);
+                          }}
+                          onNotification={showNotification}
+                        />
+                      ) : (
+                        <>
+                          {/* Glass Sections List */}
+                          <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
                         <div className="p-2 bg-blue-100 text-blue-700 rounded-md">
@@ -872,7 +964,9 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-              </div>
+                        </>
+                      )}
+                    </div>
             ) : activeTab === 'job_card' ? (
               /* JOB CARD TAB (Factory Copy: No Amounts, No Terms) */
               <div className="space-y-4">
@@ -1008,10 +1102,8 @@ export default function App() {
                 />
               </div>
             )}
-                  </>
-                )}
-              </>
-            )}
+                </>
+              )}
             </main>
           </>
         );

@@ -6,12 +6,14 @@ interface CompanyAndClientCardProps {
   quotation: Quotation;
   onUpdateQuotation: (updated: Quotation) => void;
   readOnly?: boolean;
+  isAdmin?: boolean;
 }
 
 export const CompanyAndClientCard: React.FC<CompanyAndClientCardProps> = ({
   quotation,
   onUpdateQuotation,
   readOnly = false,
+  isAdmin = false,
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [showAdvancedTerms, setShowAdvancedTerms] = useState(false);
@@ -113,9 +115,14 @@ export const CompanyAndClientCard: React.FC<CompanyAndClientCardProps> = ({
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
                     <span>Salesman / Order Assigned To</span>
-                    {readOnly && (
+                    {readOnly && !isAdmin && (
                       <span className="text-[10px] lowercase font-normal bg-amber-200/70 text-amber-900 px-1.5 py-0.2 rounded border border-amber-300">
                         locked
+                      </span>
+                    )}
+                    {readOnly && isAdmin && (
+                      <span className="text-[10px] uppercase font-bold bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded border border-purple-300">
+                        Admin Editable
                       </span>
                     )}
                   </label>
@@ -127,7 +134,7 @@ export const CompanyAndClientCard: React.FC<CompanyAndClientCardProps> = ({
               <div className="sm:w-64">
                 <input
                   type="text"
-                  disabled={readOnly}
+                  disabled={readOnly && !isAdmin}
                   value={quotation.salesmanName || ''}
                   onChange={(e) =>
                     onUpdateQuotation({
@@ -136,7 +143,11 @@ export const CompanyAndClientCard: React.FC<CompanyAndClientCardProps> = ({
                     })
                   }
                   placeholder="e.g. Shiju / Mohammed / Rajesh"
-                  className="w-full px-3.5 py-2 bg-white disabled:bg-slate-100 disabled:text-slate-600 disabled:cursor-not-allowed border border-amber-300 rounded-lg text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors shadow-2xs"
+                  className={`w-full px-3.5 py-2 bg-white border rounded-lg text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors shadow-2xs ${
+                    readOnly && !isAdmin
+                      ? 'bg-slate-100 text-slate-600 cursor-not-allowed border-slate-300'
+                      : 'border-amber-300'
+                  }`}
                 />
               </div>
             </div>

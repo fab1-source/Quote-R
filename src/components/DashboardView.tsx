@@ -31,7 +31,9 @@ import {
   Clock,
   MessageSquare,
   Database,
-  GitBranch
+  GitBranch,
+  RotateCcw,
+  Pencil
 } from 'lucide-react';
 import { Quotation, UserAccount } from '../types';
 import { InterglassEmblem } from './InterglassLogo';
@@ -41,11 +43,25 @@ import {
   ConfirmationDetails,
   getDefaultDeliveryDate,
   updateJobCardFlags,
-  getNextRevisionCode
+  updateCoordinatorRemarks,
+  getNextRevisionCode,
+  updateQuotationSalesman,
 } from '../utils/quotationStorage';
 import { exportJobCardToExcel } from '../utils/optimizerExport';
 import { UsersManagementView } from './UsersManagementView';
 import { DbStatusResponse } from '../utils/apiClient';
+
+/**
+ * Format revision string into standard 'R-00', 'R-01' format
+ */
+export function formatRevBadge(revStr: string = 'REV-00'): string {
+  const clean = (revStr || '').trim().toUpperCase();
+  const match = clean.match(/(\d+)/);
+  if (match) {
+    return `R-${match[1].padStart(2, '0')}`;
+  }
+  return clean || 'R-00';
+}
 
 interface DashboardViewProps {
   quotations: Quotation[];
@@ -58,8 +74,10 @@ interface DashboardViewProps {
   onDuplicateQuotation: (id: string) => void;
   onReviseQuotation?: (quotation: Quotation) => void;
   onCancelQuotation: (id: string, reason: string) => void;
+  onUncancelQuotation?: (id: string) => void;
   onConfirmQuotation: (id: string, details: ConfirmationDetails) => void;
   onUnconfirmQuotation: (id: string) => void;
+  onUpdateSalesman?: (id: string, salesmanName: string) => void;
   onLoadSample: () => void;
   onExportBackup: () => void;
   onImportBackup: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -75,9 +93,179 @@ interface DashboardViewProps {
       factoryComments?: string;
     }
   ) => void;
+  onUpdateCoordinatorRemarks?: (id: string, remarks: string, author?: string) => void;
   dbStatus?: DbStatusResponse | null;
   onOpenDbStatus?: () => void;
 }
+
+/**
+ * Inline editable remarks cell for Quotation Coordinator and Admin
+ */
+const CoordinatorRemarksCell: React.FC<{
+  quotation: Quotation;
+  onSaveRemarks?: (id: string, remarks: string, author?: string) => void;
+  readOnly?: boolean;
+  currentUser: UserAccount;
+}> = ({ quotation, onSaveRemarks, readOnly = false, currentUser }) => {
+  const [remarkText, setRemarkText] = useState(quotation.coordinatorRemarks || '');
+  const [isSaved, setIsSaved] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+
+  React.useEffect(() => {
+    setRemarkText(quotation.coordinatorRemarks || '');
+  }, [quotation.coordinatorRemarks]);
+
+  const handleSave = () => {
+    if (readOnly) return;
+    const author = currentUser?.username || 'COORDINATOR1';
+    if (onSaveRemarks) {
+      onSaveRemarks(quotation.id, remarkText, author);
+    } else {
+      updateCoordinatorRemarks(quotation.id, remarkText, author);
+    }
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 2000);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly) return;
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleSave();
+    }
+  };
+
+  const hasUnsavedChanges = !readOnly && remarkText !== (quotation.coordinatorRemarks || '');
+
+  const quickPresets = [
+    'Called client for update',
+    'Awaiting client LPO',
+    'Followed up via WhatsApp',
+    'Client reviewing quotation',
+    'Price query submitted to client',
+    'Order expected soon'
+  ];
+
+  const handleApplyPreset = (preset: string) => {
+    if (readOnly) return;
+    const updated = remarkText ? `${remarkText.trim()} • ${preset}` : preset;
+    setRemarkText(updated);
+    const author = currentUser?.username || 'COORDINATOR1';
+    if (onSaveRemarks) {
+      onSaveRemarks(quotation.id, updated, author);
+    } else {
+      updateCoordinatorRemarks(quotation.id, updated, author);
+    }
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 2000);
+  };
+
+  if (readOnly) {
+    return (
+      <div className="w-full min-w-[220px] max-w-[320px]" onClick={(e) => e.stopPropagation()}>
+        <div className="text-xs p-2 border rounded-lg border-amber-200 bg-amber-50/50 text-slate-700 min-h-[34px] leading-tight">
+          {remarkText ? (
+            <div>
+              <span className="font-medium text-slate-800">{remarkText}</span>
+              {quotation.coordinatorRemarksAuthor && (
+                <div className="text-[10px] text-amber-800 font-semibold mt-1">
+                  By {quotation.coordinatorRemarksAuthor}
+                  {quotation.coordinatorRemarksUpdatedAt && (
+                    <span className="text-slate-400 font-normal">
+                      {' '}• {new Date(quotation.coordinatorRemarksUpdatedAt).toLocaleDateString('en-GB')}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <span className="text-slate-400 italic">No follow-up remarks recorded</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full min-w-[240px] max-w-[340px]" onClick={(e) => e.stopPropagation()}>
+      <div className="relative">
+        <textarea
+          rows={isFocused || remarkText.length > 35 ? 2 : 1}
+          value={remarkText}
+          onChange={(e) => {
+            setRemarkText(e.target.value);
+            setIsSaved(false);
+          }}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => {
+            setIsFocused(false);
+            if (remarkText !== (quotation.coordinatorRemarks || '')) {
+              handleSave();
+            }
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder="Enter follow-up remark (e.g. called client, awaiting approval)..."
+          className="w-full text-xs p-2 border rounded-lg border-amber-300 bg-amber-50/30 hover:bg-white hover:border-amber-400 focus:bg-white focus:border-amber-600 focus:ring-1 focus:ring-amber-600 focus:outline-none resize-none transition-all placeholder:text-slate-400 text-slate-900 leading-tight"
+        />
+        {isSaved && (
+          <span className="absolute bottom-1.5 right-1.5 text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1 py-0.2 rounded border border-emerald-300 shadow-2xs">
+            Saved ✓
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-1 mt-1">
+        {quotation.coordinatorRemarksAuthor ? (
+          <span className="text-[10px] text-amber-900 font-medium truncate max-w-[140px]" title={`Author: ${quotation.coordinatorRemarksAuthor}`}>
+            By <strong>{quotation.coordinatorRemarksAuthor}</strong>
+            {quotation.coordinatorRemarksUpdatedAt && (
+              <span className="text-slate-400"> • {new Date(quotation.coordinatorRemarksUpdatedAt).toLocaleDateString('en-GB')}</span>
+            )}
+          </span>
+        ) : (
+          <span className="text-[10px] text-slate-400 italic">Coordinator follow-up</span>
+        )}
+
+        <div className="flex items-center gap-1">
+          {hasUnsavedChanges && (
+            <button
+              type="button"
+              onClick={handleSave}
+              className="text-[10px] font-bold text-amber-900 hover:text-white bg-amber-100 hover:bg-amber-700 border border-amber-300 hover:border-amber-700 px-2 py-0.5 rounded cursor-pointer transition-colors shadow-2xs"
+            >
+              Save Remark
+            </button>
+          )}
+
+          {/* Quick preset dropdown */}
+          <div className="relative group/preset">
+            <button
+              type="button"
+              className="text-[10px] font-medium text-slate-500 hover:text-amber-900 bg-slate-100 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+              title="Add quick status preset"
+            >
+              + Preset
+            </button>
+            <div className="hidden group-hover/preset:block absolute right-0 bottom-full mb-1 z-30 bg-white border border-slate-200 shadow-lg rounded-lg p-1.5 w-48 text-left">
+              <div className="text-[10px] font-bold text-slate-500 px-1.5 py-0.5 uppercase tracking-wider">Quick Presets</div>
+              {quickPresets.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => handleApplyPreset(preset)}
+                  className="w-full text-left text-[11px] text-slate-700 hover:text-amber-950 hover:bg-amber-50 px-2 py-1 rounded transition-colors block truncate"
+                  title={preset}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 /**
  * Inline editable comments cell for Factory Manager in Running Jobs
@@ -176,8 +364,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onDuplicateQuotation,
   onReviseQuotation,
   onCancelQuotation,
+  onUncancelQuotation,
   onConfirmQuotation,
   onUnconfirmQuotation,
+  onUpdateSalesman,
   onLoadSample,
   onExportBackup,
   onImportBackup,
@@ -185,6 +375,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onLogout,
   onNotification,
   onUpdateJobCardFlags,
+  onUpdateCoordinatorRemarks,
   dbStatus,
   onOpenDbStatus,
 }) => {
@@ -192,6 +383,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const isAdmin = currentUser.role === 'ADMIN';
   const isEstimator = currentUser.role === 'ESTIMATION';
   const isViewer = currentUser.role === 'VIEWER';
+  const isCoordinator = currentUser.role === 'COORDINATOR';
+  const isReadOnlyUser = isViewer || isCoordinator;
+  const canSeeRemarks = isAdmin || isCoordinator;
+  const canCancel = isAdmin || isCoordinator;
+
+  // Map of older revisions for each quote family, sorted newest to oldest
+  const previousRevisionsMap = useMemo(() => {
+    const map = new Map<string, Quotation[]>();
+    for (const q of quotations) {
+      const ref = (q.from?.refNo || '').trim().toUpperCase();
+      if (!ref) continue;
+      const list = map.get(ref) || [];
+      list.push(q);
+      map.set(ref, list);
+    }
+    // Sort each family by revision descending
+    for (const [ref, list] of map.entries()) {
+      list.sort((a, b) => {
+        const revNumA = a.revisionNumber ?? (a.isArchivedRevision ? 0 : 1);
+        const revNumB = b.revisionNumber ?? (b.isArchivedRevision ? 0 : 1);
+        if (revNumA !== revNumB) return revNumB - revNumA;
+        return (b.from?.rev || '').localeCompare(a.from?.rev || '');
+      });
+      map.set(ref, list);
+    }
+    return map;
+  }, [quotations]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
@@ -225,7 +443,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Confirmation Modal State (Read-only as per last saved quotation)
   const [quoteToConfirm, setQuoteToConfirm] = useState<Quotation | null>(null);
+  const [salesmanInput, setSalesmanInput] = useState('');
   const [committedDateInput, setCommittedDateInput] = useState<string>(() => getDefaultDeliveryDate(4));
+
+  // Admin Change Salesman Modal State (allows Admin to change salesman for any order)
+  const [editingSalesmanQuote, setEditingSalesmanQuote] = useState<Quotation | null>(null);
+  const [newSalesmanName, setNewSalesmanName] = useState('');
+
+  // Extract known salesmen from quotations for quick selection
+  const knownSalesmen = useMemo(() => {
+    const set = new Set<string>();
+    ['Shiju', 'Mohammed', 'Rajesh', 'Ashraf', 'Biju'].forEach((n) => set.add(n));
+    quotations.forEach((q) => {
+      if (q.salesmanName?.trim()) set.add(q.salesmanName.trim());
+      if (q.from?.attention?.trim()) set.add(q.from.attention.trim());
+    });
+    return Array.from(set).filter(Boolean);
+  }, [quotations]);
 
   // Revision Modal State
   const [quoteToRevise, setQuoteToRevise] = useState<Quotation | null>(null);
@@ -233,6 +467,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Handle open confirmation modal
   const handleOpenConfirmationModal = (quote: Quotation) => {
     setQuoteToConfirm(quote);
+    setSalesmanInput(quote.salesmanName || quote.from?.attention || '');
     setCommittedDateInput(quote.committedDeliveryDate || getDefaultDeliveryDate(4));
   };
 
@@ -508,9 +743,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     if (!quoteToConfirm) return;
     const { grandTotalQty, totalAmountAED } = calculateQuotationTotals(quoteToConfirm);
 
+    const assignedSalesman = (
+      salesmanInput ||
+      quoteToConfirm.salesmanName ||
+      quoteToConfirm.from?.attention ||
+      ''
+    ).trim();
+
     onConfirmQuotation(quoteToConfirm.id, {
       clientName: (quoteToConfirm.client?.name || '').trim(),
-      salesmanName: (quoteToConfirm.salesmanName || quoteToConfirm.from?.attention || '').trim(),
+      salesmanName: assignedSalesman,
       qty: grandTotalQty,
       totalAmount: totalAmountAED,
       committedDeliveryDate: committedDateInput || getDefaultDeliveryDate(4),
@@ -628,10 +870,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           if (quotesFilter === 'cancelled' && q.status !== 'cancelled') {
             return false;
           }
-          // Default 'all': keep confirmed quotes right in the table with light greenish tint! Exclude cancelled.
-          if (quotesFilter === 'all' && q.status === 'cancelled') {
-            return false;
-          }
+          // Default 'all': shows all active, confirmed, and cancelled quotations (cancelled are greyed out, confirmed have greenish tint)
         }
         // Tab 2: JOB CARDS (Confirmed production orders only, filtered by Running vs Completed sub-tab)
         else if (dashboardTab === 'job_cards') {
@@ -738,12 +977,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
     });
 
-    // Flatten: each family begins with the main quote (e.g. R-01), followed by R-00 right below it
+    // In Quotations view: ONLY display the latest active quote of each quotation family.
+    // The original quote and previous revisions are hidden when revised.
+    // They are accessed via the "R-01", "R-00" buttons near Revise.
     const result: Quotation[] = [];
     for (const g of sortedGroups) {
-      for (const item of g.items) {
-        result.push(item);
-      }
+      result.push(g.mainQuote);
     }
     return result;
   }, [quotations, dashboardTab, quotesFilter, jobCardsSubTab, searchTerm, selectedMonth, sortBy]);
@@ -999,14 +1238,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </h1>
                   <span
                     className={`px-2 py-0.5 text-xs font-semibold rounded-md uppercase tracking-wider border ${
-                      isViewer
+                      isCoordinator
+                        ? 'bg-amber-50 text-amber-900 border-amber-300'
+                        : isViewer
                         ? 'bg-purple-50 text-purple-900 border-purple-300'
                         : isProduction
                         ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
                         : 'bg-red-50 text-[#7B1818] border-red-200/80'
                     }`}
                   >
-                    {isViewer
+                    {isCoordinator
+                      ? 'Coordinator Portal'
+                      : isViewer
                       ? 'Auditor Viewer Portal'
                       : isProduction
                       ? 'Factory Production Portal'
@@ -1014,7 +1257,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </span>
                 </div>
                 <p className="text-slate-600 text-sm mt-1">
-                  {isViewer
+                  {isCoordinator
+                    ? 'Quotation Coordinator Portal: Review all quotations & job cards and record customer follow-up remarks (read-only quotes & jobs)'
+                    : isViewer
                     ? 'Read-only audit inspection: View quotes, job cards, and cost sheets without editing permissions'
                     : isProduction
                     ? 'Authorized Factory View: Review cutting lists, glass types, piece sizes, and fabrication orders'
@@ -1026,11 +1271,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {/* Primary Actions (Hidden for PRODUCTION users) */}
             {!isProduction && (
               <div className="flex items-center gap-3 flex-wrap">
-                {isViewer ? (
+                {isReadOnlyUser ? (
                   <div className="flex items-center gap-2">
-                    <div className="px-3.5 py-2 bg-purple-50 border border-purple-200 rounded-lg text-purple-900 text-xs font-semibold flex items-center gap-2">
-                      <Lock className="w-3.5 h-3.5 text-purple-700" />
-                      <span>Auditor Mode (Read-Only)</span>
+                    <div className={`px-3.5 py-2 border rounded-lg text-xs font-semibold flex items-center gap-2 ${
+                      isCoordinator
+                        ? 'bg-amber-50 border-amber-300 text-amber-950'
+                        : 'bg-purple-50 border-purple-200 text-purple-900'
+                    }`}>
+                      <Lock className={`w-3.5 h-3.5 ${isCoordinator ? 'text-amber-700' : 'text-purple-700'}`} />
+                      <span>{isCoordinator ? 'Coordinator Follow-up (Read-Only Quotes & Jobs)' : 'Auditor Mode (Read-Only)'}</span>
                     </div>
                     {quotations.length > 0 && (
                       <button
@@ -1946,12 +2195,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       : 'bg-white border-slate-200/90 hover:border-slate-300 hover:shadow-xs';
 
                     // Check invoice permissions for this row
-                    const canToggleInvoice = !isEstimator && !isViewer && (isAdmin || (isProduction && !q.isInvoiced));
+                    const canToggleInvoice = !isEstimator && !isViewer && !isCoordinator && (isAdmin || (isProduction && !q.isInvoiced));
                     let invoiceTooltip = '';
                     if (isEstimator) {
                       invoiceTooltip = 'Estimators cannot toggle Invoiced status (Admin & Production only)';
                     } else if (isViewer) {
                       invoiceTooltip = 'Viewers have read-only audit access';
+                    } else if (isCoordinator) {
+                      invoiceTooltip = 'Coordinators have read-only access to job cards';
                     } else if (isProduction && q.isInvoiced) {
                       invoiceTooltip = 'Production cannot uncheck an already invoiced job card (Admin only)';
                     } else if (q.isInvoiced) {
@@ -2068,14 +2319,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                         {/* Salesman Assigned */}
                         <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
-                          {q.salesmanName ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs bg-amber-50 text-amber-900 border border-amber-300 px-2.5 py-1 rounded-lg font-bold shadow-2xs">
-                              <UserCheck className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                              <span>{q.salesmanName}</span>
-                            </span>
-                          ) : (
-                            <span className="text-xs text-slate-400 italic">Not Assigned</span>
-                          )}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {q.salesmanName ? (
+                              <span className="inline-flex items-center gap-1.5 text-xs bg-amber-50 text-amber-900 border border-amber-300 px-2.5 py-1 rounded-lg font-bold shadow-2xs">
+                                <UserCheck className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                                <span>{q.salesmanName}</span>
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-400 italic">Not Assigned</span>
+                            )}
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingSalesmanQuote(q);
+                                  setNewSalesmanName(q.salesmanName || '');
+                                }}
+                                className="p-1 text-amber-800 hover:text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded transition cursor-pointer shadow-2xs"
+                                title="Admin: Change Salesman for this Order"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
                         </td>
 
                         {/* Quantity (Pcs) */}
@@ -2127,7 +2394,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <FactoryCommentsCell
                             quotation={q}
                             onSaveComment={handleSaveComment}
-                            readOnly={isViewer || jobCardsSubTab === 'completed'}
+                            readOnly={isViewer || isCoordinator || jobCardsSubTab === 'completed'}
                           />
                         </td>
                       </tr>
@@ -2154,17 +2421,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           /* ============================================================ */
           /* TAB 1: QUOTATIONS TABLE                                      */
           /* ============================================================ */
-          <div className="bg-slate-50/50 border border-slate-200 rounded-xl shadow-2xs overflow-hidden">
-            <div className="overflow-x-auto p-2">
-              <table className="w-full text-left border-separate border-spacing-y-2 text-xs sm:text-sm">
+          <div className="bg-white border border-slate-300 rounded-xl shadow-2xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
-                  <tr className="text-[11px] uppercase tracking-wider text-slate-500 font-bold">
-                    <th className="py-2 px-3 text-center w-32">Confirmed</th>
-                    <th className="py-2 px-4 w-44">Quote Number</th>
-                    <th className="py-2 px-3 w-28">Date</th>
-                    <th className="py-2 px-4">Client & Salesman</th>
-                    <th className="py-2 px-3 text-center w-28">Glass Specs</th>
-                    <th className="py-2 px-4 text-right w-36">Total (AED)</th>
+                  <tr className="text-[11px] uppercase tracking-wider text-slate-700 font-bold bg-slate-100">
+                    <th className="py-2.5 px-3 text-center w-28 border border-slate-300">Confirmed</th>
+                    <th className="py-2.5 px-3.5 w-60 border border-slate-300">Quote Number</th>
+                    <th className="py-2.5 px-3 w-28 border border-slate-300">Date</th>
+                    <th className="py-2.5 px-3.5 border border-slate-300">Client & Salesman</th>
+                    <th className="py-2.5 px-3 text-center w-32 border border-slate-300">Glass Specs</th>
+                    <th className="py-2.5 px-3.5 text-right w-36 border border-slate-300">Total (AED)</th>
+                    {canSeeRemarks && (
+                      <th className="py-2.5 px-3.5 text-left border border-slate-300 bg-amber-100/70 text-amber-950 font-bold min-w-[260px] max-w-[340px]">
+                        <div className="flex items-center gap-1.5">
+                          <MessageSquare className="w-3.5 h-3.5 text-amber-800" />
+                          <span>Coordinator Follow-up Remarks</span>
+                        </div>
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -2175,102 +2450,136 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     const isConfirmed = q.status === 'confirmed';
                     const isArchivedRevision = Boolean(q.isArchivedRevision || q.supersededBy || q.isLocked);
 
+                    // Find older revisions in the same quotation family (e.g. R-01, R-00)
+                    const family = previousRevisionsMap.get((q.from?.refNo || '').trim().toUpperCase()) || [];
+                    const olderRevisions = family.filter((item) => item.id !== q.id);
+
                     const boxBase = isConfirmed
-                      ? 'bg-emerald-50/60 border-emerald-300 hover:bg-emerald-50 hover:border-emerald-400'
+                      ? 'bg-emerald-50/70 hover:bg-emerald-100/60'
                       : isCancelled
-                      ? 'bg-slate-100/75 border-slate-300 opacity-60'
+                      ? 'bg-slate-100/80 opacity-70'
                       : isArchivedRevision
-                      ? 'bg-slate-50/90 border-slate-200/90 hover:bg-slate-100/80 text-slate-600'
-                      : 'bg-white border-slate-200/90 hover:border-slate-300 hover:shadow-xs';
+                      ? 'bg-slate-50/90 hover:bg-slate-100/80 text-slate-600'
+                      : 'bg-white hover:bg-slate-50/80';
 
                     return (
                       <tr
                         key={q.id}
-                        onClick={() => onOpenQuotation(q, isArchivedRevision ? 'preview' : 'edit')}
+                        onClick={() => onOpenQuotation(q, isArchivedRevision || isCancelled || isReadOnlyUser ? 'preview' : 'edit')}
                         className={`transition-all cursor-pointer group text-slate-800 ${
                           isArchivedRevision ? 'opacity-85' : ''
                         }`}
                       >
-                        {/* Confirmed Checkbox Column: Left edge of box */}
+                        {/* 1. Confirmed / Cancelled Checkbox Column */}
                         <td
-                          className={`py-3 px-3 align-middle text-center border-y border-l rounded-l-xl transition-colors ${boxBase}`}
+                          className={`py-2 px-2.5 align-middle text-center border border-slate-300 transition-colors ${boxBase}`}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          {isArchivedRevision ? (
-                            <div
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-slate-100/90 text-slate-500 text-xs font-semibold cursor-not-allowed shadow-2xs"
-                              title="This is an archived revision. It is locked and uneditable."
-                            >
-                              <Lock className="w-3.5 h-3.5 text-slate-400" />
-                              <span>Locked</span>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (isCancelled) return;
-                                handleOpenConfirmationModal(q);
-                              }}
-                              disabled={isCancelled}
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${
-                                isCancelled
-                                  ? 'opacity-40 cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400'
-                                  : isConfirmed
-                                  ? 'bg-emerald-100/90 border-emerald-300 text-emerald-900 shadow-2xs hover:bg-emerald-200/80 ring-1 ring-emerald-400/40'
-                                  : 'bg-white border-slate-300 text-slate-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50/50'
-                              }`}
-                              title={
-                                isCancelled
-                                  ? 'Cancelled quote cannot be confirmed'
-                                  : isConfirmed
-                                  ? 'Quotation is confirmed (Click to view/edit details or unconfirm)'
-                                  : 'Click to confirm this quotation and move to Job Cards'
-                              }
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isConfirmed}
-                                disabled={isCancelled}
-                                onChange={() => {}} // Click handled by button
-                                className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300 pointer-events-none accent-emerald-600"
-                              />
-                              <span className={isConfirmed ? 'font-bold text-emerald-950' : 'text-slate-700 font-medium'}>
-                                Confirmed
-                              </span>
-                            </button>
-                          )}
+                          <div className="flex flex-col items-center justify-center gap-1.5">
+                            {/* Confirmed Button */}
+                            {isArchivedRevision ? (
+                              <div
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-300 bg-slate-100 text-slate-500 text-[11px] font-semibold cursor-not-allowed shadow-2xs"
+                                title="This is an archived revision. It is locked and uneditable."
+                              >
+                                <Lock className="w-3 h-3 text-slate-400" />
+                                <span>Locked</span>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isCancelled || isReadOnlyUser) return;
+                                  handleOpenConfirmationModal(q);
+                                }}
+                                disabled={isCancelled || isReadOnlyUser}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all ${
+                                  isCancelled
+                                    ? 'opacity-40 cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400'
+                                    : isReadOnlyUser
+                                    ? isConfirmed
+                                      ? 'bg-emerald-100/90 border-emerald-300 text-emerald-900 cursor-default'
+                                      : 'bg-slate-100 border-slate-300 text-slate-500 cursor-default'
+                                    : isConfirmed
+                                    ? 'bg-emerald-100/90 border-emerald-300 text-emerald-900 shadow-2xs hover:bg-emerald-200/80 ring-1 ring-emerald-400/40 cursor-pointer'
+                                    : 'bg-white border-slate-300 text-slate-600 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50/50 cursor-pointer'
+                                }`}
+                                title={
+                                  isCancelled
+                                    ? 'Cancelled quote cannot be confirmed'
+                                    : isReadOnlyUser
+                                    ? isConfirmed
+                                      ? 'Quotation confirmed (Read-only view)'
+                                      : 'Quotation unconfirmed (Read-only view)'
+                                    : isConfirmed
+                                    ? 'Quotation is confirmed (Click to view/edit details or unconfirm)'
+                                    : 'Click to confirm this quotation and move to Job Cards'
+                                }
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isConfirmed}
+                                  disabled={isCancelled || isReadOnlyUser}
+                                  onChange={() => {}} // Click handled by button
+                                  className="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300 pointer-events-none accent-emerald-600"
+                                />
+                                <span className={isConfirmed ? 'font-bold text-emerald-950 text-[11px]' : 'text-slate-700 font-medium text-[11px]'}>
+                                  Confirmed
+                                </span>
+                              </button>
+                            )}
+
+                            {/* Cancelled Checkbox below Confirmed: ONLY Coordinator and Admin can see and click */}
+                            {canCancel && !isArchivedRevision && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenCancelModal(q, e);
+                                }}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all cursor-pointer ${
+                                  isCancelled
+                                    ? 'bg-red-100/95 border-red-400 text-red-950 shadow-2xs hover:bg-red-200 ring-1 ring-red-400/40 font-bold'
+                                    : 'bg-white border-slate-300 text-slate-600 hover:border-red-400 hover:text-red-700 hover:bg-red-50/50'
+                                }`}
+                                title={
+                                  isCancelled
+                                    ? `Cancelled: ${q.cancellationReason || 'No reason specified'} (Click to view details or restore)`
+                                    : 'Click to cancel this quotation'
+                                }
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isCancelled}
+                                  onChange={() => {}}
+                                  className="w-3.5 h-3.5 rounded text-red-600 focus:ring-red-500 border-slate-300 pointer-events-none accent-red-600"
+                                />
+                                <span className={isCancelled ? 'font-black text-red-900 text-[11px]' : 'text-slate-700 font-medium text-[11px]'}>
+                                  Cancelled
+                                </span>
+                              </button>
+                            )}
+                          </div>
                         </td>
 
-                        {/* Quote Number Badge */}
-                        <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
+                        {/* 2. Quote Number & Revision Buttons Column */}
+                        <td className={`py-3 px-3.5 align-middle border border-slate-300 transition-colors ${boxBase}`}>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            {isArchivedRevision && (
-                              <span className="text-slate-400 font-mono text-sm select-none mr-0.5" title="Archived revision">↳</span>
-                            )}
                             <span
                               className={`font-mono font-bold text-xs sm:text-sm px-2 py-0.5 rounded border transition-colors ${
                                 isCancelled
                                   ? 'text-slate-500 bg-slate-200/90 border-slate-300 line-through'
                                   : isConfirmed
                                   ? 'text-emerald-950 bg-emerald-100 border-emerald-300 font-extrabold'
-                                  : isArchivedRevision
-                                  ? 'text-slate-700 bg-slate-200/70 border-slate-300'
                                   : 'text-[#7B1818] bg-red-50/80 border-red-200/60 group-hover:border-red-300'
                               }`}
                             >
                               {ref}
                             </span>
-                            {isArchivedRevision ? (
-                              <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 border border-slate-300 inline-flex items-center gap-1">
-                                <Lock className="w-2.5 h-2.5 text-slate-500" />
-                                {q.from?.rev || 'R-00'} (Archived)
-                              </span>
-                            ) : (
-                              <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-900 border border-blue-300">
-                                {q.from?.rev || 'REV-00'}
-                              </span>
-                            )}
+                            <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-900 border border-blue-300">
+                              {formatRevBadge(q.from?.rev)}
+                            </span>
                             {isCancelled && (
                               <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
                                 Cancelled
@@ -2278,33 +2587,44 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             )}
                           </div>
 
-                          {/* Revision sub-details and revise action */}
-                          {isArchivedRevision ? (
-                            <div className="text-[11px] text-slate-500 font-medium mt-1">
-                              {q.supersededBy ? (
-                                <span>Superseded by <strong className="text-blue-700 font-mono">{q.supersededBy}</strong></span>
-                              ) : (
-                                <span>Previous locked revision</span>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2 mt-1.5">
-                              {onReviseQuotation && !isCancelled && !isConfirmed && (
+                          {/* Revision Actions: "Revise", "R-01", "R-00" Buttons */}
+                          <div className="flex items-center gap-1.5 mt-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                            {/* Revise Button */}
+                            {onReviseQuotation && !isCancelled && !isConfirmed && !isReadOnlyUser && !isProduction && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setQuoteToRevise(q);
+                                }}
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-300 hover:border-blue-400 px-2 py-0.5 rounded transition-all cursor-pointer shadow-2xs active:scale-95"
+                                title={`Create a new revision from ${formatRevBadge(q.from?.rev)} (archives current quote)`}
+                              >
+                                <GitBranch className="w-3 h-3 text-blue-600" />
+                                <span>Revise</span>
+                              </button>
+                            )}
+
+                            {/* Older Revision Buttons: e.g. R-01, R-00 (Opens original locked quote) */}
+                            {olderRevisions.map((olderQuote) => {
+                              const revBadge = formatRevBadge(olderQuote.from?.rev);
+                              return (
                                 <button
+                                  key={olderQuote.id}
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setQuoteToRevise(q);
+                                    onOpenQuotation(olderQuote, 'preview');
                                   }}
-                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded transition-colors cursor-pointer shadow-2xs"
-                                  title={`Create a revision from ${q.from?.rev || 'R-00'} (clones to new revision, locks original)`}
+                                  className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-slate-700 hover:text-blue-900 bg-slate-100 hover:bg-blue-50 border border-slate-300 hover:border-blue-400 px-2 py-0.5 rounded transition-all cursor-pointer shadow-2xs active:scale-95"
+                                  title={`Click to open original quote ${revBadge} (${olderQuote.from?.refNo || ''})`}
                                 >
-                                  <GitBranch className="w-3 h-3 text-blue-600" />
-                                  <span>Revise</span>
+                                  <FileText className="w-3 h-3 text-slate-500" />
+                                  <span>{revBadge}</span>
                                 </button>
-                              )}
-                            </div>
-                          )}
+                              );
+                            })}
+                          </div>
 
                           {isCancelled && q.cancellationReason && (
                             <div className="text-[11px] text-red-700/80 font-medium italic mt-1.5 flex items-start gap-1">
@@ -2316,38 +2636,68 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           )}
                         </td>
 
-                        {/* Date */}
-                        <td className={`py-3 px-3 align-middle text-slate-600 font-mono text-xs border-y transition-colors ${boxBase}`}>
+                        {/* 3. Date Column */}
+                        <td className={`py-3 px-3 align-middle text-slate-600 font-mono text-xs border border-slate-300 transition-colors ${boxBase}`}>
                           {q.from?.dated || new Date(q.createdAt).toLocaleDateString('en-GB')}
                         </td>
 
-                        {/* Client & Salesman */}
-                        <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
+                        {/* 4. Client & Salesman Column */}
+                        <td className={`py-3 px-3.5 align-middle border border-slate-300 transition-colors ${boxBase}`}>
                           <div className={`font-bold text-sm ${isCancelled ? 'text-slate-600 line-through' : 'text-slate-900'}`}>
                             {q.client?.name || <span className="text-slate-400 italic">No client name entered</span>}
                           </div>
                           {q.salesmanName && (
-                            <div className="mt-1">
+                            <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                               <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-900 border border-amber-300 px-2 py-0.5 rounded font-semibold shadow-2xs">
                                 <UserCheck className="w-3.5 h-3.5 text-amber-700" />
                                 Salesman: <strong>{q.salesmanName}</strong>
                               </span>
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingSalesmanQuote(q);
+                                    setNewSalesmanName(q.salesmanName || '');
+                                  }}
+                                  className="p-1 text-amber-800 hover:text-amber-950 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded transition cursor-pointer shadow-2xs"
+                                  title="Admin: Change Salesman for this Confirmed Order"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {!q.salesmanName && isAdmin && (
+                            <div className="mt-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingSalesmanQuote(q);
+                                  setNewSalesmanName('');
+                                }}
+                                className="inline-flex items-center gap-1 text-[11px] text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-2 py-0.5 rounded font-semibold transition cursor-pointer"
+                                title="Admin: Assign Salesman"
+                              >
+                                <Pencil className="w-3 h-3" /> Assign Salesman
+                              </button>
                             </div>
                           )}
                         </td>
 
-                        {/* Glass Specs */}
-                        <td className={`py-3 px-3 align-middle text-center border-y transition-colors ${boxBase}`}>
+                        {/* 5. Glass Specs Column (Moved to the right) */}
+                        <td className={`py-3 px-3 align-middle text-center border border-slate-300 transition-colors ${boxBase}`}>
                           <div className="font-mono text-xs font-semibold text-slate-700">
                             {grandTotalSqm.toFixed(2)} m²
                           </div>
-                          <div className="text-[11px] text-slate-400">
+                          <div className="text-[11px] text-slate-500">
                             {q.glassSections?.length || 0} Sec • {grandTotalQty} Pcs
                           </div>
                         </td>
 
-                        {/* Total Amount AED: Right edge of box */}
-                        <td className={`py-3 px-4 align-middle text-right border-y border-r rounded-r-xl transition-colors ${boxBase}`}>
+                        {/* 6. Total Amount AED Column (Moved to the right) */}
+                        <td className={`py-3 px-3.5 align-middle text-right border border-slate-300 transition-colors ${boxBase}`}>
                           <div className={`font-mono font-bold text-sm ${
                             isCancelled
                               ? 'text-slate-500 line-through'
@@ -2361,6 +2711,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             Incl. 5% VAT
                           </div>
                         </td>
+
+                        {/* 7. Coordinator Follow-up Remarks Column (Last column, visible to ADMIN & COORDINATOR only) */}
+                        {canSeeRemarks && (
+                          <td className={`py-2.5 px-3 align-middle border border-slate-300 bg-amber-50/20 transition-colors ${boxBase}`}>
+                            <CoordinatorRemarksCell
+                              quotation={q}
+                              onSaveRemarks={onUpdateCoordinatorRemarks}
+                              readOnly={!isAdmin && !isCoordinator}
+                              currentUser={currentUser}
+                            />
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -2369,7 +2731,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             {/* Footer Summary in Table */}
-            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-300 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
               <div>
                 Showing <span className="font-semibold text-slate-700">{filteredQuotations.length}</span> of{' '}
                 <span className="font-semibold text-slate-700">{quotations.length}</span> total quotations
@@ -2442,17 +2804,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="space-y-3">
                 {/* Salesman Name */}
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
-                  <div>
+                  <div className="flex-1">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                       <UserCheck className="w-3.5 h-3.5 text-amber-700" />
                       Salesman's Name / Assigned To
                     </span>
-                    <p className="text-sm font-semibold text-slate-900 mt-0.5">
-                      {salesman}
-                    </p>
+                    {isAdmin ? (
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={salesmanInput}
+                          onChange={(e) => setSalesmanInput(e.target.value)}
+                          placeholder="Type salesman name..."
+                          className="w-full px-2.5 py-1.5 text-sm font-semibold text-slate-900 bg-white border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                        />
+                        {isAlreadyConfirmed && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onUpdateSalesman?.(quoteToConfirm.id, salesmanInput);
+                              if (onNotification) onNotification(`Salesman updated to "${salesmanInput.trim() || 'Unassigned'}"`, 'success');
+                            }}
+                            className="px-2.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-200 hover:bg-amber-300 border border-amber-400 rounded-lg transition shrink-0 cursor-pointer shadow-2xs"
+                          >
+                            Save
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-sm font-semibold text-slate-900 mt-0.5">
+                        {salesman}
+                      </p>
+                    )}
                   </div>
-                  <span className="text-[10px] text-slate-400 font-mono px-2 py-0.5 rounded bg-white border border-slate-200 shrink-0">
-                    Locked
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border shrink-0 ${
+                    isAdmin
+                      ? 'bg-purple-100 text-purple-800 border-purple-300 font-bold uppercase'
+                      : 'bg-white text-slate-400 border-slate-200'
+                  }`}>
+                    {isAdmin ? 'Admin Editable' : 'Locked'}
                   </span>
                 </div>
 
@@ -2669,7 +3059,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">
-                    Cancel Quotation
+                    {quoteToCancel.status === 'cancelled' ? 'Quotation Cancelled' : 'Cancel Quotation'}
                   </h3>
                   <p className="text-xs font-mono font-semibold text-[#7B1818] mt-0.5">
                     {quoteToCancel.from?.refNo || 'Quotation'}
@@ -2685,84 +3075,145 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </button>
             </div>
 
-            <div className="bg-amber-50 border border-amber-200/80 rounded-lg p-3 text-xs text-amber-900 mb-4">
-              <p className="font-semibold mb-0.5 flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                Quotation Cancellation Policy
-              </p>
-              <p className="text-amber-800 text-[11px] leading-relaxed mt-1">
-                Issued quote reference numbers cannot be deleted to preserve sequential auditing.
-                Cancelling will mark this quote as cancelled, gray it out on the dashboard, and permanently lock all its values in read-only mode.
-              </p>
-            </div>
+            {quoteToCancel.status === 'cancelled' ? (
+              <div className="space-y-4">
+                <div className="bg-red-50 border border-red-200/90 rounded-lg p-3.5 text-xs text-red-950">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-bold text-red-900 flex items-center gap-1.5">
+                      <Ban className="w-3.5 h-3.5 text-red-700" />
+                      Status: Cancelled
+                    </span>
+                    {quoteToCancel.cancelledAt && (
+                      <span className="text-[10px] text-red-700 font-mono">
+                        {new Date(quoteToCancel.cancelledAt).toLocaleDateString('en-GB')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-red-200">
+                    <span className="text-[11px] font-bold text-red-900 block mb-0.5">Cancellation Reason:</span>
+                    <p className="text-xs text-red-800 bg-white/70 p-2 rounded border border-red-200 italic font-medium">
+                      "{quoteToCancel.cancellationReason || 'No reason specified'}"
+                    </p>
+                  </div>
+                </div>
 
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Reason for Cancellation <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  rows={3}
-                  value={cancelReasonInput}
-                  onChange={(e) => {
-                    setCancelReasonInput(e.target.value);
-                    if (cancelError) setCancelError('');
-                  }}
-                  placeholder="e.g. Client requested revised glass specifications..."
-                  className="w-full text-xs p-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 text-slate-800 placeholder-slate-400"
-                  autoFocus
-                />
-                {cancelError && (
-                  <p className="text-xs text-red-600 mt-1 font-medium">{cancelError}</p>
-                )}
-              </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  This quotation is currently excluded from the Total Pipeline Value and is locked in read-only mode.
+                  As an authorized user, you can reactivate it back into active pipeline if the client re-engages.
+                </p>
 
-              {/* Quick reason suggestions */}
-              <div>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">
-                  Suggested reasons:
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    'Client revised glass specs',
-                    'Pricing rejected by client',
-                    'Created duplicate in error',
-                    'Project postponed indefinitely',
-                    'Project scope re-tendered',
-                  ].map((suggestion) => (
+                <div className="mt-6 flex items-center justify-end gap-2.5 pt-4 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setQuoteToCancel(null)}
+                    className="px-3.5 py-2 text-xs font-medium text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  {onUncancelQuotation && (
                     <button
-                      key={suggestion}
                       type="button"
                       onClick={() => {
-                        setCancelReasonInput(suggestion);
-                        if (cancelError) setCancelError('');
+                        onUncancelQuotation(quoteToCancel.id);
+                        setQuoteToCancel(null);
                       }}
-                      className="text-[11px] px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition-colors text-left"
+                      className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
                     >
-                      {suggestion}
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Reactivate / Uncancel Quotation</span>
                     </button>
-                  ))}
+                  )}
                 </div>
               </div>
-            </div>
+            ) : (
+              <div>
+                <div className="bg-amber-50 border border-amber-200/80 rounded-lg p-3 text-xs text-amber-900 mb-4">
+                  <p className="font-semibold mb-0.5 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                    Quotation Cancellation Policy
+                  </p>
+                  <p className="text-amber-800 text-[11px] leading-relaxed mt-1">
+                    Issued quote reference numbers cannot be deleted to preserve sequential auditing.
+                    Cancelling will mark this quote as cancelled, remove its value from TOTAL PIPELINE VALUE, gray it out, and lock it in read-only mode.
+                  </p>
+                </div>
 
-            <div className="mt-6 flex items-center justify-end gap-2.5 pt-4 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setQuoteToCancel(null)}
-                className="px-3.5 py-2 text-xs font-medium text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
-              >
-                Keep Quotation Active
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmCancel}
-                className="px-4 py-2 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
-              >
-                <Ban className="w-3.5 h-3.5" />
-                <span>Confirm & Cancel Quote</span>
-              </button>
-            </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Reason for Cancellation <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={cancelReasonInput}
+                      onChange={(e) => {
+                        setCancelReasonInput(e.target.value);
+                        if (cancelError) setCancelError('');
+                      }}
+                      placeholder="e.g. Price too high, client selected competitor..."
+                      className="w-full text-xs p-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 text-slate-800 placeholder-slate-400"
+                      autoFocus
+                    />
+                    {cancelError && (
+                      <p className="text-xs text-red-600 mt-1 font-medium">{cancelError}</p>
+                    )}
+                  </div>
+
+                  {/* Quick reason suggestions handy */}
+                  <div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">
+                      Common cancellation reasons (click to select):
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        'Price too high',
+                        'Material not available',
+                        'Payment terms not met',
+                        'Lead time too long / Delivery delayed',
+                        'Project postponed indefinitely',
+                        'Competitor chosen',
+                        'Client unresponsive',
+                        'Client revised glass specs',
+                      ].map((suggestion) => (
+                        <button
+                          key={suggestion}
+                          type="button"
+                          onClick={() => {
+                            setCancelReasonInput(suggestion);
+                            if (cancelError) setCancelError('');
+                          }}
+                          className={`text-[11px] px-2 py-1 rounded transition-colors text-left border cursor-pointer ${
+                            cancelReasonInput === suggestion
+                              ? 'bg-red-50 border-red-300 text-red-800 font-semibold'
+                              : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex items-center justify-end gap-2.5 pt-4 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setQuoteToCancel(null)}
+                    className="px-3.5 py-2 text-xs font-medium text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Keep Quotation Active
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmCancel}
+                    className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Ban className="w-3.5 h-3.5" />
+                    <span>Confirm & Cancel Quote</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2834,6 +3285,107 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         );
       })()}
+
+      {/* Admin Change Salesman Modal (Allows Admin to change salesman for ANY order, including confirmed orders) */}
+      {editingSalesmanQuote && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-amber-100 text-amber-900 rounded-xl border border-amber-300">
+                  <UserCheck className="w-5 h-5 text-amber-800" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <span>Reassign Salesman</span>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200 uppercase">
+                      Admin
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Order Ref: <strong className="font-mono text-slate-800">{editingSalesmanQuote.from?.refNo || 'N/A'}</strong> ({editingSalesmanQuote.status === 'confirmed' ? 'Confirmed Order' : 'Active Quotation'})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSalesmanQuote(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                  Client Name
+                </label>
+                <div className="px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800">
+                  {editingSalesmanQuote.client?.name || 'Unnamed Client'}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                  Salesman's Name
+                </label>
+                <input
+                  type="text"
+                  value={newSalesmanName}
+                  onChange={(e) => setNewSalesmanName(e.target.value)}
+                  placeholder="Type or select salesman name..."
+                  className="w-full px-3.5 py-2 bg-white border border-amber-300 rounded-lg text-sm font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition shadow-2xs"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+                  Quick Select Existing Salesmen
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {knownSalesmen.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => setNewSalesmanName(name)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition border cursor-pointer ${
+                        newSalesmanName.trim().toLowerCase() === name.toLowerCase()
+                          ? 'bg-amber-600 text-white border-amber-700 shadow-xs'
+                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-amber-50 hover:text-amber-900 hover:border-amber-300'
+                      }`}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingSalesmanQuote(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onUpdateSalesman?.(editingSalesmanQuote.id, newSalesmanName);
+                  setEditingSalesmanQuote(null);
+                }}
+                className="px-5 py-2 text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>Save Salesman</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Overdue Delivery Timeline Warning Modal (Triggers every 3 hours for running jobs beyond timeline) */}
       {showOverdueModal && overdueRunningJobs.length > 0 && (
