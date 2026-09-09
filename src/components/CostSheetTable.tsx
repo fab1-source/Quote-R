@@ -64,16 +64,15 @@ function parseCleanPane(raw: string) {
   let clean = raw
     .replace(/^supply\s+of\s+/i, '')
     .replace(/\s+only$/i, '')
-    .replace(/\s+glass$/i, '')
     .trim();
 
   const lower = clean.toLowerCase();
   const isTempered = /\b(tempered|toughened|temper)\b/i.test(lower);
   const isAnnealed = /\b(annealed|anneal)\b/i.test(lower);
 
-  // Strip process words from the glass substrate name
+  // Strip process words and redundant fillers
   let name = clean
-    .replace(/\b(tempered|toughened|annealed|only)\b/gi, '')
+    .replace(/\b(tempered|toughened|annealed|only|glass)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -81,11 +80,9 @@ function parseCleanPane(raw: string) {
   const m = name.match(/(\d+(\.\d+)?)\s*mm/i);
   const thickness = m ? `${m[1]}mm` : '6mm';
 
-  // Ensure name begins with thickness
-  if (!name.toLowerCase().startsWith(thickness.toLowerCase())) {
-    name = `${thickness} ${name}`;
-  }
-  name = name.replace(/\s+/g, ' ').trim();
+  // Ensure name begins with thickness and no duplicate prefix
+  name = name.replace(new RegExp(`^${thickness}\\s*`, 'i'), '').trim();
+  name = `${thickness} ${name}`.replace(/\s+/g, ' ').trim();
 
   return {
     cleanName: name,
@@ -137,15 +134,15 @@ export function generateDefaultCostSheet(quotation: Quotation): CostSheetItem[] 
     const isDgu = lower.includes('dgu') || lower.includes('double glaz') || lower.includes('igu');
     const isLaminated = lower.includes('laminat') || lower.includes('pvb') || lower.includes('sgp');
 
-    if ((isDgu || isLaminated) && (desc.includes('+') || lower.includes('consist of'))) {
+    if ((isDgu || isLaminated) && (desc.includes('+') || /consist(s|ing)?\s+of/i.test(desc))) {
       // DGU or Laminated assembly with components
       let specPart = desc;
-      if (lower.includes('consist of')) {
-        specPart = desc.split(/consist of/i)[1] || desc;
+      if (/consist(s|ing)?\s+of/i.test(desc)) {
+        specPart = desc.split(/consist(s|ing)?\s+of/i).pop() || desc;
       }
       let optionsPart = '';
-      if (/with\s+/i.test(specPart)) {
-        const withParts = specPart.split(/with\s+/i);
+      if (/\bwith\b/i.test(specPart)) {
+        const withParts = specPart.split(/\bwith\b/i);
         specPart = withParts[0];
         optionsPart = withParts.slice(1).join(' with ');
       }
@@ -155,11 +152,22 @@ export function generateDefaultCostSheet(quotation: Quotation): CostSheetItem[] 
       pieces.forEach((p) => {
         const pl = p.toLowerCase();
         // Skip air spacer or gas
-        if (pl.includes('asp') || pl.includes('spacer') || pl.includes(' air ') || /\b\d+\s*mm\s*as\b/i.test(pl)) {
+        if (
+          pl.includes('asp') ||
+          pl.includes('spacer') ||
+          pl.includes(' air ') ||
+          pl.includes('argon') ||
+          /\b\d+\s*mm\s*as\b/i.test(pl) ||
+          /\b\d+\s*mm\s*air\b/i.test(pl)
+        ) {
           return;
         }
         // Skip PVB / SGP interlayer as raw glass sheet
-        if (pl.includes('pvb') || pl.includes('sgp') || pl.includes('interlayer')) {
+        if (pl.includes('pvb') || pl.includes('sgp') || pl.includes('interlayer') || pl.includes('eva')) {
+          return;
+        }
+        // Skip non-glass options if accidentally in pieces
+        if (pl.includes('overlap') || pl.includes('u-insert') || pl.includes('u insert') || pl.includes('step')) {
           return;
         }
 
@@ -174,7 +182,7 @@ export function generateDefaultCostSheet(quotation: Quotation): CostSheetItem[] 
         existing.totalNetSqm += sectionNetSqm;
         substrateMap.set(pane.cleanName, existing);
 
-        // If this pane is tempered, add tempering service for this pane
+        // If this pane is tempered, add tempering service specifically for this pane
         if (pane.isTempered) {
           const sName = `Temper - ${pane.cleanName}`;
           const sExisting = serviceMap.get(sName) || { name: sName, qty: 0, rate: 10.0 };
@@ -342,6 +350,35 @@ export const CostSheetTable: React.FC<CostSheetTableProps> = ({
     }
     return 15.0; // 15% default margin as shown in image.png
   });
+
+  // Keep CostSheet in sync when switching quotations or when quote glass specifications change
+  React.useEffect(() => {
+    if (!quotation.costSheetData?.items || quotation.costSheetData.items.length === 0) {
+      const fresh = generateDefaultCostSheet(quotation);
+      setItems(fresh);
+      return;
+    }
+
+    const sectionDescs = (quotation.glassSections || []).map((s) => s.description || '').join(' ').toLowerCase();
+    const hasOldDummy = quotation.costSheetData.items.some(
+      (it) =>
+        it.id.startsWith('glass-default') ||
+        (it.description.includes('6mm HD Grey') && !sectionDescs.includes('hd')) ||
+        (it.description.includes('Vitralite') && !sectionDescs.includes('vitralite'))
+    );
+
+    if (hasOldDummy) {
+      const fresh = generateDefaultCostSheet(quotation);
+      setItems(fresh);
+      persistChanges(fresh, marginPercent);
+    } else {
+      setItems(quotation.costSheetData.items);
+    }
+
+    if (typeof quotation.costSheetData.marginPercent === 'number') {
+      setMarginPercent(quotation.costSheetData.marginPercent);
+    }
+  }, [quotation.id, quotation.from?.refNo]);
 
   // Calculate Subtotal (sum of all glass + services items)
   const totalCost = useMemo(() => {

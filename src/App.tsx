@@ -354,6 +354,30 @@ export default function App() {
     showNotification('Saved quotation follow-up remark', 'success');
   };
 
+  // DASHBOARD & QUOTE ACTION: Update Assigned Salesman (ADMIN can change for ALL orders, even confirmed orders)
+  const handleUpdateSalesman = (id: string, newSalesman: string) => {
+    if (currentUser?.role !== 'ADMIN') {
+      showNotification('Access restricted: Only administrators can change assigned salesman.', 'warning');
+      return;
+    }
+    const trimmed = newSalesman.trim();
+    const updated = updateQuotationSalesman(id, trimmed);
+    setQuotations(updated);
+    if (quotation.id === id) {
+      const updatedQuote = updated.find((q) => q.id === id);
+      if (updatedQuote) {
+        setQuotation(updatedQuote);
+      } else {
+        setQuotation((prev) => ({
+          ...prev,
+          salesmanName: trimmed,
+          from: { ...prev.from, attention: trimmed },
+        }));
+      }
+    }
+    showNotification(`Salesman updated to "${trimmed || 'Unassigned'}"`, 'success');
+  };
+
   // Create Revision handler (R-00 -> R-01, original is locked and uneditable, new R-01 opens for editing)
   const handleCreateRevision = (sourceQuote: Quotation) => {
     if (currentUser?.role === 'VIEWER' || currentUser?.role === 'PRODUCTION' || currentUser?.role === 'COORDINATOR') {
@@ -634,6 +658,7 @@ export default function App() {
           onNotification={showNotification}
           onUpdateJobCardFlags={handleUpdateJobCardFlags}
           onUpdateCoordinatorRemarks={handleUpdateCoordinatorRemarks}
+          onUpdateSalesman={handleUpdateSalesman}
           dbStatus={dbStatus}
           onOpenDbStatus={() => setIsDbModalOpen(true)}
         />
@@ -734,8 +759,14 @@ export default function App() {
                       <CompanyAndClientCard
                         quotation={quotation}
                         readOnly={isLocked}
+                        isAdmin={isAdminUser}
                         onUpdateQuotation={(updated) => {
-                          if (isLocked) return;
+                          if (isLocked) {
+                            if (isAdminUser && updated.salesmanName !== quotation.salesmanName) {
+                              handleUpdateSalesman(quotation.id, updated.salesmanName || '');
+                            }
+                            return;
+                          }
                           updateQuotationAndStorage(() => updated);
                         }}
                       />
@@ -783,8 +814,8 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Sub-tab view: If COST SHEET is active, render CostSheetTable. Otherwise, render Glass Specifications */}
-                      {portalTab === 'cost_sheet' ? (
+                      {/* Sub-tab view: Keep both mounted to prevent DOM recreation or builder resetting */}
+                      <div className={portalTab === 'cost_sheet' ? 'block' : 'hidden'}>
                         <CostSheetTable
                           quotation={quotation}
                           readOnly={isLocked}
@@ -794,10 +825,11 @@ export default function App() {
                           }}
                           onNotification={showNotification}
                         />
-                      ) : (
-                        <>
-                          {/* Glass Sections List */}
-                          <div className="space-y-4">
+                      </div>
+
+                      <div className={portalTab === 'cost_sheet' ? 'hidden' : 'block'}>
+                        {/* Glass Sections List */}
+                        <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
                         <div className="p-2 bg-blue-100 text-blue-700 rounded-md">
@@ -964,9 +996,8 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                        </>
-                      )}
-                    </div>
+              </div>
+            </div>
             ) : activeTab === 'job_card' ? (
               /* JOB CARD TAB (Factory Copy: No Amounts, No Terms) */
               <div className="space-y-4">

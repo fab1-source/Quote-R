@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Layers,
   Sparkles,
@@ -135,7 +135,8 @@ export const GlassDescriptionBuilder: React.FC<GlassDescriptionBuilderProps> = (
   // Selected Services
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [includePrefix, setIncludePrefix] = useState<boolean>(true);
-  const [autoApply, setAutoApply] = useState<boolean>(true);
+  const [autoApply, setAutoApply] = useState<boolean>(false);
+  const isInitialMount = useRef(true);
 
   // Helper to format a single pane
   const formatPane = (p: GlassPaneConfig): string => {
@@ -245,8 +246,12 @@ export const GlassDescriptionBuilder: React.FC<GlassDescriptionBuilderProps> = (
     includePrefix,
   ]);
 
-  // Auto-apply when enabled
+  // Auto-apply only when explicitly enabled by user and not on initial mount
   useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
     if (autoApply && generatedDescription && !readOnly) {
       onApplyDescription(generatedDescription);
     }

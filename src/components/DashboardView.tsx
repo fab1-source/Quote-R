@@ -99,6 +99,47 @@ interface DashboardViewProps {
 }
 
 /**
+ * Compare quotation reference numbers in strictly decreasing order (e.g. IGC/26/09/004 before IGC/26/09/003)
+ */
+export function compareQuotationRefDesc(refA?: string, refB?: string): number {
+  const cleanA = (refA || '').trim();
+  const cleanB = (refB || '').trim();
+  if (!cleanA && !cleanB) return 0;
+  if (!cleanA) return 1;
+  if (!cleanB) return -1;
+
+  const numsA = cleanA.match(/\d+/g)?.map(Number) || [];
+  const numsB = cleanB.match(/\d+/g)?.map(Number) || [];
+
+  const maxLen = Math.max(numsA.length, numsB.length);
+  for (let i = 0; i < maxLen; i++) {
+    const valA = numsA[i] ?? -1;
+    const valB = numsB[i] ?? -1;
+    if (valA !== valB) {
+      return valB - valA; // Decreasing order
+    }
+  }
+  return cleanB.localeCompare(cleanA, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+/**
+ * Format small readable last updated date and time (e.g. 09 Sep 2026, 02:45 PM)
+ */
+export function formatLastUpdated(dateStr?: string | Date): string {
+  if (!dateStr) return '-';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '-';
+  return d.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+/**
  * Inline editable remarks cell for Quotation Coordinator and Admin
  */
 const CoordinatorRemarksCell: React.FC<{
@@ -413,7 +454,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'amount-desc' | 'ref-desc'>('date-desc');
+  const [sortBy, setSortBy] = useState<'ref-desc' | 'date-desc' | 'date-asc' | 'amount-desc'>('ref-desc');
   const [copiedRef, setCopiedRef] = useState<string | null>(null);
 
   // Dashboard Primary View Tabs: 'quotations' | 'job_cards' | 'users'
@@ -467,7 +508,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Handle open confirmation modal
   const handleOpenConfirmationModal = (quote: Quotation) => {
     setQuoteToConfirm(quote);
-    setSalesmanInput(quote.salesmanName || quote.from?.attention || '');
+    setSalesmanInput(quote.salesmanName || quote.from?.contact || '');
     setCommittedDateInput(quote.committedDeliveryDate || getDefaultDeliveryDate(4));
   };
 
@@ -679,8 +720,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   };
 
-  // Save Factory Comment for a Job Card
+  // Save Factory Comment for a Job Card (Only PRODUCTION and ADMIN users can save)
   const handleSaveComment = (id: string, factoryComments: string) => {
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'PRODUCTION') {
+      if (onNotification) onNotification('Access restricted: Only Production and Admin users can enter factory comments.', 'warning');
+      return;
+    }
     const target = quotations.find((q) => q.id === id);
     if (onUpdateJobCardFlags) {
       onUpdateJobCardFlags(id, { factoryComments });
@@ -928,10 +973,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         if (sortBy === 'date-asc') {
           return new Date(a.createdAt || a.updatedAt).getTime() - new Date(b.createdAt || b.updatedAt).getTime();
         }
-        if (sortBy === 'ref-desc') {
-          return (b.from?.refNo || '').localeCompare(a.from?.refNo || '');
+        if (sortBy === 'date-desc') {
+          return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
         }
-        return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
+        // Default ('ref-desc'): strictly decreasing order by quotation/job card number
+        return compareQuotationRefDesc(a.from?.refNo, b.from?.refNo);
       });
     }
 
@@ -971,10 +1017,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (sortBy === 'date-asc') {
         return new Date(a.createdAt || a.updatedAt).getTime() - new Date(b.createdAt || b.updatedAt).getTime();
       }
-      if (sortBy === 'ref-desc') {
-        return (b.from?.refNo || '').localeCompare(a.from?.refNo || '');
+      if (sortBy === 'date-desc') {
+        return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
       }
-      return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
+      // Default ('ref-desc'): strictly decreasing order by quotation number regardless of edit time
+      return compareQuotationRefDesc(a.from?.refNo, b.from?.refNo);
     });
 
     // In Quotations view: ONLY display the latest active quote of each quotation family.
@@ -1933,10 +1980,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     aria-label="Sort items"
                     className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer"
                   >
-                    <option value="date-desc">Newest First</option>
+                    <option value="ref-desc">Quotation No. (Decreasing - Default)</option>
+                    <option value="date-desc">Newest Edit First</option>
                     <option value="date-asc">Oldest First</option>
                     <option value="amount-desc">Highest Amount</option>
-                    <option value="ref-desc">Reference (Z-A)</option>
                   </select>
                 </div>
 
@@ -2163,24 +2210,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             <div className="overflow-x-auto p-2">
-              <table className="w-full text-left border-separate border-spacing-y-2 text-xs sm:text-sm">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
-                  <tr className="text-[11px] uppercase tracking-wider text-slate-500 font-bold">
-                    <th className="py-2 px-3 text-center w-28">Invoiced</th>
-                    <th className="py-2 px-4 min-w-[280px]">Job Card Ref & Client</th>
+                  <tr className="text-[11px] uppercase tracking-wider text-slate-700 font-bold bg-slate-100">
+                    <th className="py-2.5 px-2 text-center w-12 border border-slate-300">S.No.</th>
+                    <th className="py-2.5 px-3 text-center w-28 border border-slate-300">Invoiced</th>
+                    <th className="py-2.5 px-4 min-w-[260px] border border-slate-300">Job Card Ref & Client</th>
                     {jobCardsSubTab === 'running' && (
-                      <th className="py-2 px-4 w-52">Delivery Timeline</th>
+                      <th className="py-2.5 px-4 w-48 border border-slate-300">Delivery Timeline</th>
                     )}
-                    <th className="py-2 px-4 w-40">Salesman Assigned</th>
-                    <th className="py-2 px-3 text-center w-24">Total Qty</th>
-                    <th className="py-2 px-3 text-center w-28">Glass Area</th>
-                    <th className="py-2 px-4 text-right w-36">Total Amount</th>
-                    <th className="py-2 px-3 text-center w-20">Excel</th>
-                    <th className="py-2 px-4 min-w-[240px] max-w-[320px]">Factory Comments</th>
+                    <th className="py-2.5 px-4 w-40 border border-slate-300">Salesman Assigned</th>
+                    <th className="py-2.5 px-3 text-center w-24 border border-slate-300">Total Qty</th>
+                    <th className="py-2.5 px-3 text-center w-28 border border-slate-300">Glass Area</th>
+                    <th className="py-2.5 px-4 text-right w-36 border border-slate-300">Total Amount</th>
+                    <th className="py-2.5 px-3 text-center w-16 border border-slate-300">Excel</th>
+                    <th className="py-2.5 px-4 min-w-[220px] max-w-[300px] border border-slate-300">Factory Comments</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredQuotations.map((q) => {
+                  {filteredQuotations.map((q, index) => {
                     const { grandTotalQty, grandTotalSqm, totalAmountAED } = calculateQuotationTotals(q);
                     const ref = q.from?.refNo || 'Pending Ref';
                     const displayQty = typeof q.confirmedQty === 'number' ? q.confirmedQty : grandTotalQty;
@@ -2215,11 +2263,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <tr
                         key={q.id}
                         onClick={() => onOpenQuotation(q, 'job_card')}
-                        className="cursor-pointer group text-slate-800 transition-all"
+                        className="cursor-pointer group text-slate-800 transition-all hover:bg-slate-50/80"
                       >
-                        {/* Invoiced Checkbox: Left edge of box */}
+                        {/* 1. S.No. Column */}
+                        <td className={`py-3 px-2 text-center font-mono font-bold text-xs text-slate-600 border border-slate-300 ${boxBase}`}>
+                          {index + 1}
+                        </td>
+
+                        {/* Invoiced Checkbox */}
                         <td
-                          className={`py-3 px-3 align-middle text-center border-y border-l rounded-l-xl transition-colors ${boxBase}`}
+                          className={`py-3 px-3 align-middle text-center border border-slate-300 transition-colors ${boxBase}`}
                           onClick={(e) => e.stopPropagation()}
                         >
                           <label
@@ -2255,8 +2308,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </label>
                         </td>
 
-                        {/* Job Card Ref & Client: Cleaned up, no copy icon, no extra date clutter */}
-                        <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
+                        {/* Job Card Ref & Client */}
+                        <td className={`py-3 px-4 align-middle border border-slate-300 transition-colors ${boxBase}`}>
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-700 text-white px-2 py-0.5 rounded font-mono shadow-2xs">
                               JC
@@ -2267,6 +2320,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             <span className="text-[11px] text-slate-500 font-mono">
                               ({q.from?.dated || new Date(q.createdAt).toLocaleDateString('en-GB')})
                             </span>
+                          </div>
+
+                          {/* Last updated timestamp */}
+                          <div className="text-[10px] text-slate-500 font-mono mt-0.5" title="Last Updated">
+                            Updated: {formatLastUpdated(q.updatedAt || q.createdAt)}
                           </div>
 
                           {/* Client Information: Clean, bold, easy to read */}
@@ -2280,7 +2338,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                         {/* Delivery Timeline */}
                         {jobCardsSubTab === 'running' && (
-                          <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`} onClick={(e) => e.stopPropagation()}>
+                          <td className={`py-3 px-4 align-middle border border-slate-300 transition-colors ${boxBase}`} onClick={(e) => e.stopPropagation()}>
                             <div className="space-y-1.5 min-w-[170px]">
                               <div className="flex items-center justify-between text-xs gap-1">
                                 <div className="flex items-center gap-1 font-bold text-slate-900 text-[11px]">
@@ -2318,7 +2376,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         )}
 
                         {/* Salesman Assigned */}
-                        <td className={`py-3 px-4 align-middle border-y transition-colors ${boxBase}`}>
+                        <td className={`py-3 px-4 align-middle border border-slate-300 transition-colors ${boxBase}`}>
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {q.salesmanName ? (
                               <span className="inline-flex items-center gap-1.5 text-xs bg-amber-50 text-amber-900 border border-amber-300 px-2.5 py-1 rounded-lg font-bold shadow-2xs">
@@ -2346,14 +2404,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </td>
 
                         {/* Quantity (Pcs) */}
-                        <td className={`py-3 px-3 align-middle text-center border-y transition-colors ${boxBase}`}>
+                        <td className={`py-3 px-3 align-middle text-center border border-slate-300 transition-colors ${boxBase}`}>
                           <div className="font-mono font-bold text-sm text-slate-900">
                             {displayQty.toLocaleString()} <span className="text-xs font-normal text-slate-500">Pcs</span>
                           </div>
                         </td>
 
                         {/* Total Glass Area */}
-                        <td className={`py-3 px-3 align-middle text-center border-y transition-colors ${boxBase}`}>
+                        <td className={`py-3 px-3 align-middle text-center border border-slate-300 transition-colors ${boxBase}`}>
                           <div className="font-mono font-bold text-xs sm:text-sm text-slate-900">
                             {grandTotalSqm.toFixed(2)} m²
                           </div>
@@ -2363,7 +2421,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </td>
 
                         {/* Total Amount (AED) */}
-                        <td className={`py-3 px-4 align-middle text-right border-y transition-colors ${boxBase}`}>
+                        <td className={`py-3 px-4 align-middle text-right border border-slate-300 transition-colors ${boxBase}`}>
                           <div className="font-mono font-bold text-sm text-slate-900">
                             AED {amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
@@ -2371,7 +2429,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </td>
 
                         {/* 1-Click Excel Optimizer Export */}
-                        <td className={`py-3 px-3 align-middle text-center border-y transition-colors ${boxBase}`} onClick={(e) => e.stopPropagation()}>
+                        <td className={`py-3 px-3 align-middle text-center border border-slate-300 transition-colors ${boxBase}`} onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
                             onClick={() => {
@@ -2389,12 +2447,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </button>
                         </td>
 
-                        {/* Factory Comments: Right edge of box */}
-                        <td className={`py-3 px-4 align-middle border-y border-r rounded-r-xl transition-colors ${boxBase}`} onClick={(e) => e.stopPropagation()}>
+                        {/* Factory Comments: ONLY PRODUCTION and ADMIN can enter/edit */}
+                        <td className={`py-3 px-4 align-middle border border-slate-300 transition-colors ${boxBase}`} onClick={(e) => e.stopPropagation()}>
                           <FactoryCommentsCell
                             quotation={q}
                             onSaveComment={handleSaveComment}
-                            readOnly={isViewer || isCoordinator || jobCardsSubTab === 'completed'}
+                            readOnly={(!isProduction && !isAdmin) || jobCardsSubTab === 'completed'}
                           />
                         </td>
                       </tr>
@@ -2426,6 +2484,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
                   <tr className="text-[11px] uppercase tracking-wider text-slate-700 font-bold bg-slate-100">
+                    <th className="py-2.5 px-2 text-center w-12 border border-slate-300">S.No.</th>
                     <th className="py-2.5 px-3 text-center w-28 border border-slate-300">Confirmed</th>
                     <th className="py-2.5 px-3.5 w-60 border border-slate-300">Quote Number</th>
                     <th className="py-2.5 px-3 w-28 border border-slate-300">Date</th>
@@ -2443,7 +2502,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredQuotations.map((q) => {
+                  {filteredQuotations.map((q, index) => {
                     const { grandTotalQty, grandTotalSqm, totalWithVatAED } = calculateQuotationTotals(q);
                     const ref = q.from?.refNo || 'Pending Ref';
                     const isCancelled = q.status === 'cancelled';
@@ -2470,6 +2529,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           isArchivedRevision ? 'opacity-85' : ''
                         }`}
                       >
+                        {/* S.No. Column */}
+                        <td className={`py-2 px-2 text-center font-mono font-bold text-xs text-slate-600 border border-slate-300 ${boxBase}`}>
+                          {index + 1}
+                        </td>
+
                         {/* 1. Confirmed / Cancelled Checkbox Column */}
                         <td
                           className={`py-2 px-2.5 align-middle text-center border border-slate-300 transition-colors ${boxBase}`}
@@ -2585,6 +2649,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 Cancelled
                               </span>
                             )}
+                          </div>
+
+                          {/* Last updated timestamp */}
+                          <div className="text-[10px] text-slate-500 font-mono mt-0.5" title="Last Updated">
+                            Updated: {formatLastUpdated(q.updatedAt || q.createdAt)}
                           </div>
 
                           {/* Revision Actions: "Revise", "R-01", "R-00" Buttons */}
