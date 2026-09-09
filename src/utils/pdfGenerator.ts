@@ -3,6 +3,8 @@ import html2canvas from 'html2canvas-pro';
 
 export interface PDFExportOptions {
   fileName?: string;
+  orientation?: 'portrait' | 'landscape';
+  customWidth?: number;
   onProgress?: (progress: number, message: string) => void;
 }
 
@@ -10,7 +12,7 @@ export async function exportToPdf(
   elementId: string,
   options: PDFExportOptions = {}
 ): Promise<void> {
-  const { fileName = 'Quotation.pdf', onProgress } = options;
+  const { fileName = 'Quotation.pdf', orientation = 'portrait', customWidth, onProgress } = options;
   const element = document.getElementById(elementId);
 
   if (!element) {
@@ -23,10 +25,12 @@ export async function exportToPdf(
   const originalWidth = element.style.width;
   const originalMaxWidth = element.style.maxWidth;
 
+  const isLandscape = orientation === 'landscape';
+  const targetWidthPx = customWidth || (isLandscape ? 1360 : 1020);
+
   try {
-    // Standard A4 width in pixels at 96 DPI is ~794px, at 2x is ~1588px
-    element.style.width = '1020px';
-    element.style.maxWidth = '1020px';
+    element.style.width = `${targetWidthPx}px`;
+    element.style.maxWidth = `${targetWidthPx}px`;
 
     onProgress?.(30, 'Rendering document canvas...');
 
@@ -36,15 +40,15 @@ export async function exportToPdf(
       logging: false,
       allowTaint: true,
       backgroundColor: '#ffffff',
-      windowWidth: 1200
+      windowWidth: targetWidthPx + 100
     });
 
     onProgress?.(60, 'Generating PDF pages...');
 
-    // A4 dimensions in mm: 210 x 297
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = 210;
-    const pageHeight = 297;
+    // A4 dimensions in mm: 210 x 297 (Portrait) or 297 x 210 (Landscape)
+    const pdf = new jsPDF(isLandscape ? 'l' : 'p', 'mm', 'a4');
+    const pageWidth = isLandscape ? 297 : 210;
+    const pageHeight = isLandscape ? 210 : 297;
     const margin = 5; // 5mm margin
 
     const contentWidth = pageWidth - margin * 2;

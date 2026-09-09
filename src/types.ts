@@ -70,6 +70,8 @@ export interface Quotation {
   confirmedAt?: string;
   salesmanName?: string;
   authorName?: string; // e.g. "HOD", "ESTIMATOR1", "ESTIMATOR2" (uneditable quotation author)
+  updatedBy?: string; // name or username of the user who last edited this quotation
+  lastEditedBy?: string;
   confirmedQty?: number;
   confirmedTotalAmount?: number;
   committedDeliveryDate?: string; // e.g. "YYYY-MM-DD"
@@ -126,3 +128,33 @@ export interface UserAccount {
   name?: string;
   createdAt: string;
 }
+
+export type ActivityActionType =
+  | 'CREATE_QUOTE'
+  | 'EDIT_QUOTE'
+  | 'CONFIRM_JOB'
+  | 'UNCONFIRM_JOB'
+  | 'CANCEL_QUOTE'
+  | 'UNCANCEL_QUOTE'
+  | 'REVISE_QUOTE'
+  | 'DUPLICATE_QUOTE'
+  | 'UPDATE_COMMENT'
+  | 'UPDATE_REMARKS'
+  | 'UPDATE_SALESMAN'
+  | 'UPDATE_INVOICE'
+  | 'SYSTEM';
+
+export interface ActivityLog {
+  id: string;
+  timestamp: string; // ISO date string
+  date: string; // formatted e.g. "09-09-2026"
+  time: string; // formatted e.g. "01:45 PM"
+  user: string; // username or name e.g. "ADMIN", "ESTIMATOR1"
+  userRole?: string; // e.g. "ADMIN", "ESTIMATION", "PRODUCTION"
+  action: ActivityActionType;
+  reference: string; // Quote or Job Card ref, e.g. "IGC/26/09/003"
+  clientName?: string; // Client name
+  summary: string; // Short title e.g. "Created new quotation"
+  details: string; // Detailed breakdown of changes
+}
+

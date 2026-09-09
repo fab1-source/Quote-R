@@ -47,6 +47,7 @@ import {
   STORAGE_KEY,
 } from './utils/quotationStorage';
 import { getCurrentUser, logoutUser } from './utils/userStorage';
+import { logActivity } from './utils/auditLogger';
 import { getDbStatusApi, DbStatusResponse } from './utils/apiClient';
 import { calculateQuotationTotals } from './utils/calculations';
 import { convertNumberToWords } from './utils/numberToWords';
@@ -153,9 +154,14 @@ export default function App() {
       showNotification('Read-only mode: Modifications are disabled for your user role.', 'warning');
       return;
     }
+    const userName = currentUser?.username || currentUser?.name || 'ADMIN';
     setQuotation((prev) => {
-      const updated = updater(prev);
-      const updatedList = saveQuotation(updated);
+      const updated = {
+        ...updater(prev),
+        updatedBy: userName,
+        lastEditedBy: userName,
+      };
+      const updatedList = saveQuotation(updated, userName);
       setQuotations(updatedList);
       return updated;
     });
@@ -171,24 +177,47 @@ export default function App() {
       showNotification('Access restricted: Coordinators and viewers have read-only access and cannot create quotations.', 'warning');
       return;
     }
+    const userName = currentUser?.username || 'ESTIMATOR';
     try {
-      const newQuote = await createNewQuotationWithNextRefAsync(new Date(), currentUser?.username);
-      const updatedList = saveQuotation(newQuote);
+      const newQuote = await createNewQuotationWithNextRefAsync(new Date(), userName);
+      newQuote.updatedBy = userName;
+      newQuote.lastEditedBy = userName;
+      const updatedList = saveQuotation(newQuote, userName);
       setQuotations(updatedList);
       setQuotation(newQuote);
       setPortalTab('quotations');
       setActiveTab('edit');
       setViewMode('portal');
       showNotification(`Created new quotation ${newQuote.from.refNo}`, 'success');
+      logActivity({
+        user: userName,
+        userRole: currentUser?.role || 'ESTIMATION',
+        action: 'CREATE_QUOTE',
+        reference: newQuote.from.refNo,
+        clientName: newQuote.client.name,
+        summary: `Created new quotation ${newQuote.from.refNo}`,
+        details: `Initialised consecutive quotation reference ${newQuote.from.refNo}`,
+      });
     } catch {
-      const fallbackQuote = createNewQuotationWithNextRef(new Date(), currentUser?.username);
-      const updatedList = saveQuotation(fallbackQuote);
+      const fallbackQuote = createNewQuotationWithNextRef(new Date(), userName);
+      fallbackQuote.updatedBy = userName;
+      fallbackQuote.lastEditedBy = userName;
+      const updatedList = saveQuotation(fallbackQuote, userName);
       setQuotations(updatedList);
       setQuotation(fallbackQuote);
       setPortalTab('quotations');
       setActiveTab('edit');
       setViewMode('portal');
       showNotification(`Created new quotation ${fallbackQuote.from.refNo}`, 'success');
+      logActivity({
+        user: userName,
+        userRole: currentUser?.role || 'ESTIMATION',
+        action: 'CREATE_QUOTE',
+        reference: fallbackQuote.from.refNo,
+        clientName: fallbackQuote.client.name,
+        summary: `Created new quotation ${fallbackQuote.from.refNo}`,
+        details: `Initialised consecutive quotation reference ${fallbackQuote.from.refNo}`,
+      });
     }
   };
 
@@ -232,9 +261,19 @@ export default function App() {
       showNotification('Access restricted: Coordinators and viewers cannot duplicate quotations.', 'warning');
       return;
     }
-    const { newQuotation, allQuotes } = duplicateQuotation(id);
+    const userName = currentUser?.username || 'ADMIN';
+    const { newQuotation, allQuotes } = duplicateQuotation(id, userName);
     setQuotations(allQuotes);
     showNotification(`Duplicated as ${newQuotation.from.refNo}`, 'success');
+    logActivity({
+      user: userName,
+      userRole: currentUser?.role || 'ESTIMATION',
+      action: 'DUPLICATE_QUOTE',
+      reference: newQuotation.from.refNo,
+      clientName: newQuotation.client?.name,
+      summary: `Duplicated quotation as ${newQuotation.from.refNo}`,
+      details: `Duplicated from quote ID ${id}. New reference allocated.`,
+    });
   };
 
   // DASHBOARD ACTION: Cancel quote (Accessible to Coordinator and Admin)
@@ -245,7 +284,8 @@ export default function App() {
     }
     const target = quotations.find((q) => q.id === id);
     const ref = target?.from?.refNo || 'this quotation';
-    const updated = cancelQuotation(id, reason);
+    const userName = currentUser?.username || 'ADMIN';
+    const updated = cancelQuotation(id, reason, userName);
     setQuotations(updated);
     if (quotation.id === id) {
       const updatedQuote = updated.find((q) => q.id === id);
@@ -254,6 +294,15 @@ export default function App() {
       }
     }
     showNotification(`Cancelled quotation ${ref} and removed from pipeline value`, 'info');
+    logActivity({
+      user: userName,
+      userRole: currentUser?.role || 'ADMIN',
+      action: 'CANCEL_QUOTE',
+      reference: ref,
+      clientName: target?.client?.name,
+      summary: `Cancelled quotation ${ref}`,
+      details: `Reason: "${reason || 'Not specified'}". Status set to cancelled.`,
+    });
   };
 
   // DASHBOARD ACTION: Reactivate / Uncancel quote
@@ -264,7 +313,8 @@ export default function App() {
     }
     const target = quotations.find((q) => q.id === id);
     const ref = target?.from?.refNo || 'this quotation';
-    const updated = uncancelQuotation(id);
+    const userName = currentUser?.username || 'ADMIN';
+    const updated = uncancelQuotation(id, userName);
     setQuotations(updated);
     if (quotation.id === id) {
       const updatedQuote = updated.find((q) => q.id === id);
@@ -273,6 +323,15 @@ export default function App() {
       }
     }
     showNotification(`Reactivated quotation ${ref} to active pipeline`, 'success');
+    logActivity({
+      user: userName,
+      userRole: currentUser?.role || 'ADMIN',
+      action: 'UNCANCEL_QUOTE',
+      reference: ref,
+      clientName: target?.client?.name,
+      summary: `Reactivated quotation ${ref}`,
+      details: `Restored cancelled quotation ${ref} back to active pipeline.`,
+    });
   };
 
   // DASHBOARD ACTION: Confirm quote
@@ -283,7 +342,8 @@ export default function App() {
     }
     const target = quotations.find((q) => q.id === id);
     const ref = target?.from?.refNo || 'this quotation';
-    const updated = confirmQuotation(id, details);
+    const userName = currentUser?.username || 'ADMIN';
+    const updated = confirmQuotation(id, details, userName);
     setQuotations(updated);
     if (quotation.id === id) {
       const updatedQuote = updated.find((q) => q.id === id);
@@ -292,6 +352,15 @@ export default function App() {
       }
     }
     showNotification(`Confirmed quotation ${ref} and assigned to ${details.salesmanName || 'Salesman'}!`, 'success');
+    logActivity({
+      user: userName,
+      userRole: currentUser?.role || 'ADMIN',
+      action: 'CONFIRM_JOB',
+      reference: ref,
+      clientName: details.clientName,
+      summary: `Confirmed quotation & issued Job Card for ${ref}`,
+      details: `Assigned Salesman: ${details.salesmanName}, Delivery Date: ${details.committedDeliveryDate}, Qty: ${details.qty} Pcs, Amount: AED ${details.totalAmount.toLocaleString()}`,
+    });
   };
 
   // DASHBOARD ACTION: Unconfirm quote
@@ -302,6 +371,7 @@ export default function App() {
     }
     const target = quotations.find((q) => q.id === id);
     const ref = target?.from?.refNo || 'this quotation';
+    const userName = currentUser?.username || 'ADMIN';
     const updated = unconfirmQuotation(id);
     setQuotations(updated);
     if (quotation.id === id) {
@@ -311,6 +381,15 @@ export default function App() {
       }
     }
     showNotification(`Unlocked quotation ${ref} for editing`, 'info');
+    logActivity({
+      user: userName,
+      userRole: currentUser?.role || 'ADMIN',
+      action: 'UNCONFIRM_JOB',
+      reference: ref,
+      clientName: target?.client?.name,
+      summary: `Unlocked Job Card ${ref} back to draft`,
+      details: `Reverted quotation ${ref} to active editable state.`,
+    });
   };
 
   // DASHBOARD ACTION: Update Job Card Flags (completed, invoiced, committedDeliveryDate, factoryComments)
@@ -327,13 +406,52 @@ export default function App() {
       showNotification('Access restricted: Coordinators and viewers have read-only view of job cards.', 'warning');
       return;
     }
-    const updated = updateJobCardFlags(id, updates);
+    const target = quotations.find((q) => q.id === id);
+    const ref = target?.from?.refNo || 'Order';
+    const userName = currentUser?.username || 'PRODUCTION';
+    const updated = updateJobCardFlags(id, {
+      ...updates,
+      updatedBy: userName,
+    });
     setQuotations(updated);
     if (quotation.id === id) {
       const updatedQuote = updated.find((q) => q.id === id);
       if (updatedQuote) {
         setQuotation(updatedQuote);
       }
+    }
+
+    // Log the specific change
+    if (updates.factoryComments !== undefined) {
+      logActivity({
+        user: userName,
+        userRole: currentUser?.role || 'PRODUCTION',
+        action: 'UPDATE_COMMENT',
+        reference: ref,
+        clientName: target?.client?.name,
+        summary: `Factory comment entered on ${ref}`,
+        details: `Plant note: "${updates.factoryComments}"`,
+      });
+    } else if (updates.isInvoiced !== undefined) {
+      logActivity({
+        user: userName,
+        userRole: currentUser?.role || 'ADMIN',
+        action: 'UPDATE_INVOICE',
+        reference: ref,
+        clientName: target?.client?.name,
+        summary: updates.isInvoiced ? `Job ${ref} marked INVOICED` : `Job ${ref} marked PENDING INVOICE`,
+        details: updates.isInvoiced ? 'Order completed and invoice recorded.' : 'Order invoice status reset.',
+      });
+    } else if (updates.isCompleted !== undefined) {
+      logActivity({
+        user: userName,
+        userRole: currentUser?.role || 'PRODUCTION',
+        action: 'UPDATE_INVOICE',
+        reference: ref,
+        clientName: target?.client?.name,
+        summary: updates.isCompleted ? `Job ${ref} marked COMPLETED` : `Job ${ref} marked RUNNING`,
+        details: updates.isCompleted ? 'Production finished on factory floor.' : 'Job marked back in-progress.',
+      });
     }
   };
 
@@ -343,7 +461,10 @@ export default function App() {
       showNotification('Access restricted: Only coordinators and administrators can record follow-up remarks.', 'warning');
       return;
     }
-    const updated = updateCoordinatorRemarks(id, remarks, author || currentUser?.username || 'COORDINATOR1');
+    const target = quotations.find((q) => q.id === id);
+    const ref = target?.from?.refNo || 'Quotation';
+    const userName = author || currentUser?.username || 'COORDINATOR1';
+    const updated = updateCoordinatorRemarks(id, remarks, userName);
     setQuotations(updated);
     if (quotation.id === id) {
       const updatedQuote = updated.find((q) => q.id === id);
@@ -352,6 +473,15 @@ export default function App() {
       }
     }
     showNotification('Saved quotation follow-up remark', 'success');
+    logActivity({
+      user: userName,
+      userRole: currentUser?.role || 'COORDINATOR',
+      action: 'UPDATE_REMARKS',
+      reference: ref,
+      clientName: target?.client?.name,
+      summary: `Coordinator remark recorded on ${ref}`,
+      details: `Follow-up remark: "${remarks}"`,
+    });
   };
 
   // DASHBOARD & QUOTE ACTION: Update Assigned Salesman (ADMIN can change for ALL orders, even confirmed orders)
@@ -360,8 +490,11 @@ export default function App() {
       showNotification('Access restricted: Only administrators can change assigned salesman.', 'warning');
       return;
     }
+    const target = quotations.find((q) => q.id === id);
+    const ref = target?.from?.refNo || 'Order';
     const trimmed = newSalesman.trim();
-    const updated = updateQuotationSalesman(id, trimmed);
+    const userName = currentUser?.username || 'ADMIN';
+    const updated = updateQuotationSalesman(id, trimmed, userName);
     setQuotations(updated);
     if (quotation.id === id) {
       const updatedQuote = updated.find((q) => q.id === id);
@@ -372,10 +505,21 @@ export default function App() {
           ...prev,
           salesmanName: trimmed,
           from: { ...prev.from, attention: trimmed },
+          updatedBy: userName,
+          lastEditedBy: userName,
         }));
       }
     }
     showNotification(`Salesman updated to "${trimmed || 'Unassigned'}"`, 'success');
+    logActivity({
+      user: userName,
+      userRole: 'ADMIN',
+      action: 'UPDATE_SALESMAN',
+      reference: ref,
+      clientName: target?.client?.name,
+      summary: `Salesman updated for ${ref}`,
+      details: `Reassigned salesman to "${trimmed || 'Unassigned'}"`,
+    });
   };
 
   // Create Revision handler (R-00 -> R-01, original is locked and uneditable, new R-01 opens for editing)
@@ -384,10 +528,11 @@ export default function App() {
       showNotification('Access restricted: Only estimators and admins can create revisions.', 'warning');
       return;
     }
+    const userName = currentUser?.username || 'ESTIMATOR';
     try {
       const { originalQuote, newRevision, allQuotes } = createQuotationRevision(
         sourceQuote,
-        currentUser?.username || 'ESTIMATOR'
+        userName
       );
       setQuotations(allQuotes);
       setQuotation(newRevision);
@@ -397,6 +542,15 @@ export default function App() {
         `Created revision ${newRevision.from.rev} from ${originalQuote.from.rev}. Original ${originalQuote.from.rev} is now locked and uneditable.`,
         'success'
       );
+      logActivity({
+        user: userName,
+        userRole: currentUser?.role || 'ESTIMATION',
+        action: 'REVISE_QUOTE',
+        reference: newRevision.from.refNo,
+        clientName: newRevision.client?.name,
+        summary: `Created revision ${newRevision.from.rev} for ${sourceQuote.from.refNo}`,
+        details: `Superseded ${originalQuote.from.rev || 'REV-00'} (locked) with new revision ${newRevision.from.rev}.`,
+      });
     } catch (err: any) {
       showNotification(`Failed to create revision: ${err?.message || err}`, 'error');
     }
@@ -565,14 +719,30 @@ export default function App() {
       showNotification('Read-only mode: Viewers cannot save modifications.', 'warning');
       return;
     }
-    const updated = saveQuotation(quotation);
+    const userName = currentUser?.username || 'ADMIN';
+    const quoteToSave = {
+      ...quotation,
+      updatedBy: userName,
+      lastEditedBy: userName,
+    };
+    const updated = saveQuotation(quoteToSave, userName);
     setQuotations(updated);
+    setQuotation(quoteToSave);
     try {
       await flushPendingQuotationSave();
       showNotification(`Saved ${quotation.from.refNo} to Intranet Database & Dashboard!`, 'success');
     } catch {
       showNotification(`Saved ${quotation.from.refNo} locally`, 'info');
     }
+    logActivity({
+      user: userName,
+      userRole: currentUser?.role || 'ESTIMATION',
+      action: 'EDIT_QUOTE',
+      reference: quotation.from.refNo,
+      clientName: quotation.client?.name,
+      summary: `Saved quotation ${quotation.from.refNo}`,
+      details: `Saved changes for ${quotation.client?.name || 'client'} (${quotation.from.rev || 'REV-00'}). Total: AED ${totalWithVatAED.toLocaleString('en-AE', { minimumFractionDigits: 2 })}`,
+    });
   };
 
   // Apply items pasted into the global/modal paste section

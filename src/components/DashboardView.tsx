@@ -33,11 +33,14 @@ import {
   Database,
   GitBranch,
   RotateCcw,
-  Pencil
+  Pencil,
+  FileBarChart,
+  User
 } from 'lucide-react';
 import { Quotation, UserAccount } from '../types';
 import { InterglassEmblem } from './InterglassLogo';
 import { calculateQuotationTotals } from '../utils/calculations';
+import { ManagementReportsModal } from './ManagementReportsModal';
 import {
   generateNextQuoteNumber,
   ConfirmationDetails,
@@ -453,6 +456,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [quotations]);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [showReportsModal, setShowReportsModal] = useState<boolean>(false);
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'ref-desc' | 'date-desc' | 'date-asc' | 'amount-desc'>('ref-desc');
   const [copiedRef, setCopiedRef] = useState<string | null>(null);
@@ -1926,26 +1930,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             {/* Controls Bar: Search & Filters */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-5">
-              <div className="relative flex-1 max-w-md">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder={
-                    dashboardTab === 'job_cards'
-                      ? `Search ${jobCardsSubTab} job cards by ref, client, salesman...`
-                      : 'Search quotations by quote ref, client, salesman...'
-                  }
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#7B1818]/20 focus:border-[#7B1818] transition-all shadow-2xs"
-                />
-                {searchTerm && (
+              <div className="flex items-center gap-2 flex-1 max-w-lg">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder={
+                      dashboardTab === 'job_cards'
+                        ? `Search ${jobCardsSubTab} job cards by ref, client, salesman...`
+                        : 'Search quotations by quote ref, client, salesman...'
+                    }
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#7B1818]/20 focus:border-[#7B1818] transition-all shadow-2xs"
+                  />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {/* ADMIN ONLY: Reports Button */}
+                {isAdmin && (
                   <button
                     type="button"
-                    onClick={() => setSearchTerm('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
+                    onClick={() => setShowReportsModal(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-[#7B1818] to-[#9E2A2B] hover:from-[#661212] hover:to-[#7B1818] text-white text-xs sm:text-sm font-bold rounded-lg shadow-2xs hover:shadow transition-all shrink-0 cursor-pointer border border-[#7B1818]"
+                    title="Generate Management PDF Reports (Admin Only)"
                   >
-                    Clear
+                    <FileBarChart className="w-4 h-4 text-amber-300" />
+                    <span>Reports</span>
                   </button>
                 )}
               </div>
@@ -2314,7 +2333,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-700 text-white px-2 py-0.5 rounded font-mono shadow-2xs">
                               JC
                             </span>
-                            <span className="font-mono font-extrabold text-sm px-2.5 py-0.5 rounded-md border text-emerald-950 bg-emerald-50/80 border-emerald-300 shadow-2xs">
+                            <span className="font-mono font-black text-base sm:text-lg px-2.5 py-0.5 rounded-md border text-emerald-950 bg-emerald-50/80 border-emerald-300 shadow-2xs tracking-tight">
                               {ref}
                             </span>
                             <span className="text-[11px] text-slate-500 font-mono">
@@ -2322,9 +2341,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             </span>
                           </div>
 
-                          {/* Last updated timestamp */}
-                          <div className="text-[10px] text-slate-500 font-mono mt-0.5" title="Last Updated">
-                            Updated: {formatLastUpdated(q.updatedAt || q.createdAt)}
+                          {/* User who edited / created */}
+                          <div className="text-[11px] text-slate-600 font-medium mt-0.5 flex items-center gap-1.5" title={`Edited by ${q.updatedBy || q.lastEditedBy || q.authorName || 'ADMIN'}`}>
+                            <User className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span className="font-semibold text-slate-700 truncate max-w-[170px]">
+                              {q.updatedBy || q.lastEditedBy || q.authorName || 'ADMIN'}
+                            </span>
                           </div>
 
                           {/* Client Information: Clean, bold, easy to read */}
@@ -2631,11 +2653,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <td className={`py-3 px-3.5 align-middle border border-slate-300 transition-colors ${boxBase}`}>
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span
-                              className={`font-mono font-bold text-xs sm:text-sm px-2 py-0.5 rounded border transition-colors ${
+                              className={`font-mono font-black text-base sm:text-lg px-2.5 py-0.5 rounded-md border transition-colors tracking-tight ${
                                 isCancelled
                                   ? 'text-slate-500 bg-slate-200/90 border-slate-300 line-through'
                                   : isConfirmed
-                                  ? 'text-emerald-950 bg-emerald-100 border-emerald-300 font-extrabold'
+                                  ? 'text-emerald-950 bg-emerald-100 border-emerald-300'
                                   : 'text-[#7B1818] bg-red-50/80 border-red-200/60 group-hover:border-red-300'
                               }`}
                             >
@@ -2651,9 +2673,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             )}
                           </div>
 
-                          {/* Last updated timestamp */}
-                          <div className="text-[10px] text-slate-500 font-mono mt-0.5" title="Last Updated">
-                            Updated: {formatLastUpdated(q.updatedAt || q.createdAt)}
+                          {/* User who edited / created */}
+                          <div className="text-[11px] text-slate-600 font-medium mt-0.5 flex items-center gap-1.5" title={`Edited by ${q.updatedBy || q.lastEditedBy || q.authorName || 'ADMIN'}`}>
+                            <User className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span className="font-semibold text-slate-700 truncate max-w-[170px]">
+                              {q.updatedBy || q.lastEditedBy || q.authorName || 'ADMIN'}
+                            </span>
                           </div>
 
                           {/* Revision Actions: "Revise", "R-01", "R-00" Buttons */}
@@ -3594,6 +3619,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Management Reports Modal (Admin Only) */}
+      {isAdmin && (
+        <ManagementReportsModal
+          isOpen={showReportsModal}
+          onClose={() => setShowReportsModal(false)}
+          quotations={quotations}
+          currentUser={currentUser}
+          onNotification={onNotification}
+        />
       )}
     </div>
   );

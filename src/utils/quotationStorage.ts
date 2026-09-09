@@ -116,12 +116,15 @@ export async function flushPendingQuotationSave(): Promise<Quotation | null> {
  * Saves or updates a quotation in storage and syncs with backend server API.
  * If quote already exists (by id or refNo), updates it; otherwise prepends it.
  */
-export function saveQuotation(quote: Quotation): Quotation[] {
+export function saveQuotation(quote: Quotation, updatedByUser?: string): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
+  const user = updatedByUser || quote.updatedBy || quote.authorName || 'ADMIN';
   const updatedQuote: Quotation = {
     ...quote,
     updatedAt: now,
+    updatedBy: user,
+    lastEditedBy: user,
   };
 
   const refNo = (updatedQuote.from?.refNo || '').trim();
@@ -191,7 +194,7 @@ export function deleteQuotation(id: string): Quotation[] {
  * Cancels an existing quotation by recording reason, timestamp and setting status to 'cancelled'.
  * Quotations are never deleted, ensuring the sequential quote numbers remain intact in records.
  */
-export function cancelQuotation(id: string, reason: string): Quotation[] {
+export function cancelQuotation(id: string, reason: string, updatedByUser?: string): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
   let changedQuote: Quotation | null = null;
@@ -204,6 +207,8 @@ export function cancelQuotation(id: string, reason: string): Quotation[] {
         cancellationReason: reason.trim(),
         cancelledAt: now,
         updatedAt: now,
+        updatedBy: updatedByUser || q.updatedBy,
+        lastEditedBy: updatedByUser || q.lastEditedBy,
       };
       changedQuote = u;
       return u;
@@ -227,7 +232,7 @@ export function cancelQuotation(id: string, reason: string): Quotation[] {
 /**
  * Reactivates / un-cancels a previously cancelled quotation back to active draft status.
  */
-export function uncancelQuotation(id: string): Quotation[] {
+export function uncancelQuotation(id: string, updatedByUser?: string): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
   let changedQuote: Quotation | null = null;
@@ -240,6 +245,8 @@ export function uncancelQuotation(id: string): Quotation[] {
         cancellationReason: undefined,
         cancelledAt: undefined,
         updatedAt: now,
+        updatedBy: updatedByUser || q.updatedBy,
+        lastEditedBy: updatedByUser || q.lastEditedBy,
       };
       changedQuote = u;
       return u;
@@ -283,7 +290,7 @@ export function getDefaultDeliveryDate(daysFromNow: number = 4): string {
 /**
  * Marks quotation as confirmed, locks editing, updates client name, salesman, amounts and committed delivery date.
  */
-export function confirmQuotation(id: string, details: ConfirmationDetails): Quotation[] {
+export function confirmQuotation(id: string, details: ConfirmationDetails, updatedByUser?: string): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
   let changedQuote: Quotation | null = null;
@@ -295,6 +302,8 @@ export function confirmQuotation(id: string, details: ConfirmationDetails): Quot
         status: 'confirmed' as const,
         confirmedAt: now,
         updatedAt: now,
+        updatedBy: updatedByUser || q.updatedBy,
+        lastEditedBy: updatedByUser || q.lastEditedBy,
         salesmanName: details.salesmanName.trim(),
         client: {
           ...q.client,
@@ -327,7 +336,7 @@ export function confirmQuotation(id: string, details: ConfirmationDetails): Quot
  * Updates the salesman assigned to a quotation or confirmed order.
  * Accessible to ADMIN for all orders (active, confirmed, etc.).
  */
-export function updateQuotationSalesman(id: string, salesmanName: string): Quotation[] {
+export function updateQuotationSalesman(id: string, salesmanName: string, updatedByUser?: string): Quotation[] {
   const currentList = getSavedQuotations();
   const now = new Date().toISOString();
   let changedQuote: Quotation | null = null;
@@ -337,7 +346,13 @@ export function updateQuotationSalesman(id: string, salesmanName: string): Quota
       const u: Quotation = {
         ...q,
         salesmanName: salesmanName.trim(),
+        from: {
+          ...q.from,
+          contact: salesmanName.trim(),
+        },
         updatedAt: now,
+        updatedBy: updatedByUser || q.updatedBy,
+        lastEditedBy: updatedByUser || q.lastEditedBy,
       };
       changedQuote = u;
       return u;
@@ -371,6 +386,7 @@ export function updateJobCardFlags(
     coordinatorRemarks?: string;
     coordinatorRemarksUpdatedAt?: string;
     coordinatorRemarksAuthor?: string;
+    updatedBy?: string;
   }
 ): Quotation[] {
   const currentList = getSavedQuotations();
@@ -379,10 +395,13 @@ export function updateJobCardFlags(
 
   const updatedList = currentList.map((q) => {
     if (q.id === id) {
+      const user = updates.updatedBy || q.updatedBy || 'ADMIN';
       const u: Quotation = {
         ...q,
         ...updates,
         updatedAt: now,
+        updatedBy: user,
+        lastEditedBy: user,
       };
       changedQuote = u;
       return u;
@@ -417,11 +436,14 @@ export function updateCoordinatorRemarks(
 
   const updatedList = currentList.map((q) => {
     if (q.id === id) {
+      const user = author || 'COORDINATOR1';
       const u: Quotation = {
         ...q,
         coordinatorRemarks: remarks,
         coordinatorRemarksUpdatedAt: now,
-        coordinatorRemarksAuthor: author || 'COORDINATOR1',
+        coordinatorRemarksAuthor: user,
+        updatedBy: user,
+        lastEditedBy: user,
         updatedAt: now,
       };
       changedQuote = u;
@@ -585,9 +607,10 @@ export async function createNewQuotationWithNextRefAsync(
   newQuote.from.refNo = nextRefNo;
   newQuote.from.dated = dated;
   newQuote.title = `Quotation ${nextRefNo}`;
-  if (authorName) {
-    newQuote.authorName = authorName;
-  }
+  const user = authorName || 'ADMIN';
+  newQuote.authorName = user;
+  newQuote.updatedBy = user;
+  newQuote.lastEditedBy = user;
 
   return newQuote;
 }
@@ -606,9 +629,10 @@ export function createNewQuotationWithNextRef(date: Date = new Date(), authorNam
   newQuote.from.refNo = nextRefNo;
   newQuote.from.dated = dated;
   newQuote.title = `Quotation ${nextRefNo}`;
-  if (authorName) {
-    newQuote.authorName = authorName;
-  }
+  const user = authorName || 'ADMIN';
+  newQuote.authorName = user;
+  newQuote.updatedBy = user;
+  newQuote.lastEditedBy = user;
 
   return newQuote;
 }
@@ -631,6 +655,8 @@ export function duplicateQuotation(id: string, authorName?: string): { newQuotat
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     authorName: authorName || source.authorName || 'ESTIMATOR1',
+    updatedBy: authorName || source.updatedBy || 'ESTIMATOR1',
+    lastEditedBy: authorName || source.lastEditedBy || 'ESTIMATOR1',
     from: {
       ...source.from,
       refNo: nextRefNo,
@@ -691,6 +717,8 @@ export function createQuotationRevision(
     createdAt: nowIso,
     updatedAt: nowIso,
     authorName: authorName || sourceQuote.authorName || 'ESTIMATOR1',
+    updatedBy: authorName || sourceQuote.updatedBy || 'ESTIMATOR1',
+    lastEditedBy: authorName || sourceQuote.lastEditedBy || 'ESTIMATOR1',
     status: 'active',
     isLocked: false,
     isArchivedRevision: false,
